@@ -78,7 +78,11 @@ const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
     const message = `Ваш код подтверждения MedFlow: ${code}`;
 
     try {
-      await sendWhatsAppMessage(phone, message);
+      // Пытаемся отправить, но не блокируем надолго
+      const sendPromise = sendWhatsAppMessage(phone, message);
+      const timeoutPromise = new Promise(resolve => setTimeout(resolve, 5000));
+      
+      await Promise.race([sendPromise, timeoutPromise]);
       setStep('OTP');
     } catch (err) {
       console.error(err);
@@ -110,9 +114,14 @@ const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
         }
 
         // 2. Ищем пользователя по ТЕЛЕФОНУ (игнорируя UID)
+        // Добавляем таймаут для чтения, чтобы не висело
         const usersRef = collection(db, "users");
         const q = query(usersRef, where("phone", "==", cleanPhone));
-        const querySnapshot = await getDocs(q);
+        
+        const fetchPromise = getDocs(q);
+        const timeoutPromise = new Promise<any>(resolve => setTimeout(() => resolve({ empty: true }), 3000)); // Если долго - считаем что юзера нет
+
+        const querySnapshot = await Promise.race([fetchPromise, timeoutPromise]);
 
         if (!querySnapshot.empty) {
             // ПОЛЬЗОВАТЕЛЬ НАЙДЕН -> ВХОД
@@ -137,7 +146,8 @@ const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
 
     } catch (err) {
         console.error("Verification Error:", err);
-        setError("Ошибка проверки данных. Попробуйте еще раз.");
+        // В случае ошибки просто идем на регистрацию
+        setStep('REGISTER');
     } finally {
         setLoading(false);
     }
@@ -164,16 +174,24 @@ const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
     setLoading(true);
     
     try {
-        // Получаем ID
+        // Подготовка данных
         let uid = localStorage.getItem('medflow_uid');
-        if (!uid) {
-            uid = auth.currentUser?.uid || 'offline_user_' + Date.now();
-            localStorage.setItem('medflow_uid', uid);
+        if (!uid || uid.startsWith('offline_')) {
+             // Пробуем получить реальный UID если он есть
+             if (auth.currentUser) {
+                 uid = auth.currentUser.uid;
+                 localStorage.setItem('medflow_uid', uid);
+             } else {
+                 // Если нет - оставляем старый или генерим новый
+                 uid = uid || 'offline_user_' + Date.now();
+             }
         }
+        
+        const cleanPhone = phone.replace(/\D/g, '') || localStorage.getItem('medflow_phone') || '';
 
         const userData = {
             uid,
-            phone: localStorage.getItem('medflow_phone') || phone.replace(/\D/g, ''),
+            phone: cleanPhone,
             role,
             bin,
             companyName,
@@ -181,19 +199,25 @@ const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
             createdAt: new Date().toISOString()
         };
 
-        // Записываем данные
-        const saveFirestore = setDoc(doc(db, "users", uid), userData);
-        const saveRtdb = set(ref(rtdb, 'users/' + uid), userData);
+        // Записываем данные с таймаутом (чтобы не зависало)
+        const dbPromise = Promise.all([
+             setDoc(doc(db, "users", uid), userData).catch(e => console.warn("Firestore save failed", e)),
+             set(ref(rtdb, 'users/' + uid), userData).catch(e => console.warn("RTDB save failed", e))
+        ]);
         
-        await Promise.all([saveFirestore, saveRtdb]);
+        // Ждем максимум 2.5 секунды, потом пускаем дальше
+        const timeoutPromise = new Promise(resolve => setTimeout(resolve, 2500));
+        await Promise.race([dbPromise, timeoutPromise]);
         
         // Отправляем приветствие в фоне
         sendWhatsAppMessage(phone, `Добро пожаловать в MedFlow, ${leaderName}!`).catch(e => console.warn("WhatsApp skip"));
 
+        // УСПЕХ
         onSuccess();
 
     } catch (err) {
         console.error("Registration Critical Error:", err);
+        // Все равно пускаем пользователя, даже если база отвалилась
         onSuccess();
     } finally {
         setLoading(false);
