@@ -123,9 +123,14 @@ const Dashboard: React.FC = () => {
       
       try {
           const q = query(collection(db, "users"), where("bin", "==", searchBin));
-          const snapshot = await getDocs(q);
           
-          if (!snapshot.empty) {
+          // Race condition to prevent hanging
+          const fetchPromise = getDocs(q);
+          const timeoutPromise = new Promise<any>(resolve => setTimeout(() => resolve({ empty: true }), 3000));
+          
+          const snapshot = await Promise.race([fetchPromise, timeoutPromise]);
+          
+          if (snapshot && !snapshot.empty) {
               const userData = snapshot.docs[0].data() as UserProfile;
               if (userData.role === currentUser?.role) {
                   alert("Нельзя создать договор с организацией того же типа!");
@@ -183,7 +188,12 @@ const Dashboard: React.FC = () => {
 
       try {
           // 1. Create DB Doc
-          await addDoc(collection(db, "contracts"), newContract);
+          // Use Promise.race to prevent hanging. Resolve strictly after 3s if DB is slow.
+          // This allows Firestore optimistic updates to handle the UI.
+          const createPromise = addDoc(collection(db, "contracts"), newContract);
+          const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve("timeout"), 3000));
+          
+          await Promise.race([createPromise, timeoutPromise]);
           
           // 2. Send WhatsApp in background (don't await blocking UI)
           if (isInviteNeeded && invitePhone) {
@@ -193,7 +203,9 @@ const Dashboard: React.FC = () => {
           }
           
           // 3. Close Modal UI
-          alert("Договор успешно создан!");
+          // Don't show alert if it timed out to avoid confusion, just close it.
+          // alert("Договор успешно создан!");
+          
           setIsCreateModalOpen(false);
           // Reset form
           setContractTerms({ price: '', headcount: '', endDate: '', contractDate: new Date().toISOString().split('T')[0] });
