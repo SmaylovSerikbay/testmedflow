@@ -1,8 +1,205 @@
 import React, { useState, useEffect } from 'react';
-import { UserProfile, Contract, AmbulatoryCard, Doctor, DoctorRouteSheet } from '../types';
-import { rtdb, ref, get, onValue } from '../services/firebase';
+import { UserProfile, Contract, AmbulatoryCard, Doctor, DoctorRouteSheet, Employee, DoctorExamination } from '../types';
+import { rtdb, ref, get, onValue, set } from '../services/firebase';
 import { LoaderIcon, UserMdIcon, FileTextIcon, CheckShieldIcon, CalendarIcon, ClockIcon, LogoutIcon } from './Icons';
 import { FACTOR_RULES, FactorRule } from '../factorRules';
+import AmbulatoryCardView from './AmbulatoryCardView';
+
+// --- RESEARCH PARSING UTILITIES ---
+/**
+ * Парсит стаж из строки (например, "10 лет", "5 лет 3 месяца", "10")
+ * Возвращает количество лет (дробное число)
+ */
+const parseExperience = (experienceStr?: string): number => {
+  if (!experienceStr || !experienceStr.trim()) return 0;
+  
+  const str = experienceStr.trim().toLowerCase();
+  
+  // Ищем числа в строке
+  const yearMatch = str.match(/(\d+)\s*(?:лет|год|г\.?)/i);
+  const monthMatch = str.match(/(\d+)\s*(?:месяц|мес\.?)/i);
+  const simpleNumberMatch = str.match(/^(\d+)$/);
+  
+  let years = 0;
+  
+  if (yearMatch) {
+    years = parseInt(yearMatch[1], 10);
+  } else if (simpleNumberMatch) {
+    // Если просто число, считаем что это годы
+    years = parseInt(simpleNumberMatch[1], 10);
+  }
+  
+  if (monthMatch) {
+    const months = parseInt(monthMatch[1], 10);
+    years += months / 12;
+  }
+  
+  return years;
+};
+
+/**
+ * Определяет, является ли это предварительным осмотром
+ * (если lastMedDate отсутствует или очень старая)
+ */
+const isPreliminaryExam = (lastMedDate?: string): boolean => {
+  if (!lastMedDate) return true;
+  
+  try {
+    const lastDate = new Date(lastMedDate);
+    const now = new Date();
+    const diffYears = (now.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24 * 365);
+    
+    // Если последний осмотр был более 2 лет назад, считаем предварительным
+    return diffYears > 2;
+  } catch {
+    return true;
+  }
+};
+
+/**
+ * Парсит текст исследований и применяет условия к сотруднику
+ * Возвращает персонализированный список исследований
+ */
+const personalizeResearch = (researchText: string, employee: Employee): string => {
+  if (!researchText || !researchText.trim()) return '';
+  
+  const text = researchText.trim();
+  
+  // Получаем стаж сотрудника
+  const totalExp = parseExperience(employee.totalExperience);
+  const positionExp = parseExperience(employee.positionExperience);
+  const experience = positionExp > 0 ? positionExp : totalExp; // Используем стаж по должности, если есть
+  
+  const isPreliminary = isPreliminaryExam(employee.lastMedDate);
+  
+  // Сначала обрабатываем сложные случаи с встроенными условиями
+  // Разбиваем текст на части, сохраняя структуру
+  
+  // Шаг 1: Разбиваем на основные части по запятым и точкам с запятой
+  // Но учитываем, что условия могут быть встроены в текст
+  let processedText = text;
+  
+  // Обрабатываем условия "при стаже более X лет" - удаляем их, если условие не выполняется
+  const moreThanPattern = /при\s+стаже\s+более\s+(\d+)\s*(?:лет|год|г\.?)\s*,?\s*/gi;
+  let match;
+  while ((match = moreThanPattern.exec(text)) !== null) {
+    const threshold = parseInt(match[1], 10);
+    if (experience <= threshold) {
+      // Условие не выполняется - удаляем эту часть текста
+      // Находим границы фразы с условием
+      const start = match.index;
+      const end = match.index + match[0].length;
+      
+      // Ищем следующую запятую, точку или конец строки
+      const afterMatch = text.slice(end).match(/^[^,;.]*/);
+      const phraseEnd = end + (afterMatch ? afterMatch[0].length : 0);
+      
+      // Удаляем всю фразу с условием
+      processedText = processedText.replace(text.slice(start, phraseEnd), '').trim();
+    } else {
+      // Условие выполняется - удаляем только условие, оставляем исследование
+      processedText = processedText.replace(match[0], '').trim();
+    }
+  }
+  
+  // Обрабатываем условия "при стаже X-Y лет"
+  const rangePattern = /при\s+стаже\s+(\d+)\s*-\s*(\d+)\s*(?:лет|год|г\.?)\s*,?\s*/gi;
+  while ((match = rangePattern.exec(text)) !== null) {
+    const min = parseInt(match[1], 10);
+    const max = parseInt(match[2], 10);
+    if (experience < min || experience > max) {
+      const start = match.index;
+      const end = match.index + match[0].length;
+      const afterMatch = text.slice(end).match(/^[^,;.]*/);
+      const phraseEnd = end + (afterMatch ? afterMatch[0].length : 0);
+      processedText = processedText.replace(text.slice(start, phraseEnd), '').trim();
+    } else {
+      processedText = processedText.replace(match[0], '').trim();
+    }
+  }
+  
+  // Обрабатываем "при стаже более X-ти лет"
+  const moreThanTypPattern = /при\s+стаже\s+более\s+(\d+)\s*-?\s*ти\s*(?:лет|год|г\.?)\s*,?\s*/gi;
+  while ((match = moreThanTypPattern.exec(text)) !== null) {
+    const threshold = parseInt(match[1], 10);
+    if (experience <= threshold) {
+      const start = match.index;
+      const end = match.index + match[0].length;
+      const afterMatch = text.slice(end).match(/^[^,;.]*/);
+      const phraseEnd = end + (afterMatch ? afterMatch[0].length : 0);
+      processedText = processedText.replace(text.slice(start, phraseEnd), '').trim();
+    } else {
+      processedText = processedText.replace(match[0], '').trim();
+    }
+  }
+  
+  // Обрабатываем "со стажем до X лет"
+  const untilPattern = /со\s+стажем\s+до\s+(\d+)\s*(?:лет|год|г\.?)\s*,?\s*/gi;
+  while ((match = untilPattern.exec(text)) !== null) {
+    const threshold = parseInt(match[1], 10);
+    if (experience >= threshold) {
+      const start = match.index;
+      const end = match.index + match[0].length;
+      const afterMatch = text.slice(end).match(/^[^,;.]*/);
+      const phraseEnd = end + (afterMatch ? afterMatch[0].length : 0);
+      processedText = processedText.replace(text.slice(start, phraseEnd), '').trim();
+    } else {
+      processedText = processedText.replace(match[0], '').trim();
+    }
+  }
+  
+  // Обрабатываем "для подземных работников со стажем до X лет"
+  const undergroundPattern = /для\s+подземных\s+работников\s+со\s+стажем\s+до\s+(\d+)\s*(?:лет|год|г\.?)\s*,?\s*/gi;
+  while ((match = undergroundPattern.exec(text)) !== null) {
+    const threshold = parseInt(match[1], 10);
+    // Пока не можем определить, подземный ли работник, поэтому пропускаем такие условия
+    // Можно добавить проверку по должности или участку в будущем
+    processedText = processedText.replace(match[0], '').trim();
+  }
+  
+  // Обрабатываем условия предварительного/повторного осмотра
+  // Ищем фразы, которые начинаются с "при предварительном осмотре" и удаляем их, если это не предварительный осмотр
+  const preliminaryPattern = /при\s+предварительном\s+осмотре\s+[^,;.]*(?:,|;|$)/gi;
+  if (preliminaryPattern.test(processedText)) {
+    if (!isPreliminary) {
+      // Удаляем всю фразу с предварительным осмотром до следующей запятой или конца
+      processedText = processedText.replace(preliminaryPattern, '').trim();
+    } else {
+      // Удаляем только условие, оставляем исследование
+      processedText = processedText.replace(/при\s+предварительном\s+осмотре\s*,?\s*/gi, '').trim();
+    }
+  }
+  
+  const repeatedPattern = /при\s+повторном\s+осмотре\s+[^,;.]*(?:,|;|$)/gi;
+  if (repeatedPattern.test(processedText)) {
+    if (isPreliminary) {
+      processedText = processedText.replace(repeatedPattern, '').trim();
+    } else {
+      processedText = processedText.replace(/при\s+повторном\s+осмотре\s*,?\s*/gi, '').trim();
+    }
+  }
+  
+  // Удаляем фразы с неопределяемыми условиями (до следующей запятой или конца)
+  processedText = processedText.replace(/если\s+имеются\s+[^,;.]*(?:,|;|$)/gi, '').trim();
+  processedText = processedText.replace(/при\s+наличии\s+[^,;.]*(?:,|;|$)/gi, '').trim();
+  
+  // Удаляем фразы с временными условиями, которые мы не можем проверить
+  processedText = processedText.replace(/через\s+\d+\s+лет?\s+[^,;.]*(?:,|;|$)/gi, '').trim();
+  processedText = processedText.replace(/\d+\s+раз\s+в\s+\d+\s+лет?\s+[^,;.]*(?:,|;|$)/gi, '').trim();
+  processedText = processedText.replace(/для\s+подземных\s+работников\s+[^,;.]*(?:,|;|$)/gi, '').trim();
+  
+  // Очищаем от лишних запятых и точек с запятой
+  processedText = processedText.replace(/[,;]\s*[,;]+/g, ', ').trim();
+  processedText = processedText.replace(/^[,;]\s*/, '').trim();
+  processedText = processedText.replace(/\s*[,;]\s*$/, '').trim();
+  
+  // Если после обработки остался пустой текст, возвращаем пустую строку
+  if (!processedText || processedText.trim().length === 0) {
+    return '';
+  }
+  
+  return processedText;
+};
 
 // Автоопределение нужных врачей по вредным факторам на основе FACTOR_RULES
 const resolveFactorRules = (text: string): FactorRule[] => {
@@ -112,6 +309,38 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
           const emp = contractData.employees?.find(e => e.id === currentUser.employeeId);
           if (emp) {
             setEmployee(emp);
+            
+            // Загружаем амбулаторную карту и выполняем миграцию если нужно
+            const cardRef = ref(rtdb, `ambulatoryCards/${currentUser.employeeId}_${currentUser.contractId}`);
+            const cardSnapshot = await get(cardRef);
+            if (cardSnapshot.exists()) {
+              let cardData = { ...cardSnapshot.val() } as AmbulatoryCard;
+              
+              // Миграция: если нет personalInfo, создаем его из данных сотрудника
+              if (!cardData.personalInfo) {
+                cardData.personalInfo = {
+                  fullName: emp.name,
+                  dateOfBirth: emp.dob || '',
+                  gender: emp.gender,
+                  phone: emp.phone,
+                  workplace: contractData.clientName,
+                  position: emp.position,
+                  harmfulFactors: emp.harmfulFactor || '',
+                };
+                
+                // Сохраняем обновленную карту
+                await set(cardRef, cardData);
+              }
+              
+              setAmbulatoryCard(cardData);
+            }
+            
+            // Подписываемся на обновления амбулаторной карты
+            const unsubscribe = onValue(cardRef, (snapshot) => {
+              if (snapshot.exists()) {
+                setAmbulatoryCard({ ...snapshot.val() } as AmbulatoryCard);
+              }
+            });
           }
 
           // Загружаем врачей клиники
@@ -145,20 +374,6 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
           }
         }
 
-        // Загружаем амбулаторную карту
-        const cardRef = ref(rtdb, `ambulatoryCards/${currentUser.employeeId}_${currentUser.contractId}`);
-        const cardSnapshot = await get(cardRef);
-        if (cardSnapshot.exists()) {
-          setAmbulatoryCard({ ...cardSnapshot.val() } as AmbulatoryCard);
-        }
-
-        // Подписываемся на обновления амбулаторной карты
-        const unsubscribe = onValue(cardRef, (snapshot) => {
-          if (snapshot.exists()) {
-            setAmbulatoryCard({ ...snapshot.val() } as AmbulatoryCard);
-          }
-        });
-
         // Загружаем маршрутные листы для этого договора
         try {
           const routeSheetsRef = ref(rtdb, 'routeSheets');
@@ -185,8 +400,6 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
         } catch (error) {
           console.error('Error loading route sheets:', error);
         }
-
-        return () => unsubscribe();
       } catch (error) {
         console.error('Error loading employee data:', error);
       } finally {
@@ -231,48 +444,126 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
       doctorName?: string;
       examinationDate?: string;
       status: string;
+      virtualDoctor?: boolean;
     }> = [];
 
-    routeSheets.forEach(sheet => {
+    console.log('Анализ маршрутных листов для сотрудника:', currentUser.employeeId);
+    console.log('Найдено маршрутных листов:', routeSheets.length);
+    
+    routeSheets.forEach((sheet, index) => {
+      console.log(`Маршрутный лист ${index + 1}:`, {
+        doctorId: sheet.doctorId,
+        contractId: sheet.contractId,
+        employeesCount: sheet.employees?.length || 0,
+        employees: sheet.employees?.map(e => ({ id: e.employeeId, name: e.name })) || []
+      });
+      
       const empInSheet = sheet.employees?.find(
         (emp: any) => emp.employeeId === currentUser.employeeId
       );
+      
+      console.log(`Сотрудник ${currentUser.employeeId} найден в листе ${index + 1}:`, !!empInSheet);
+      
       if (empInSheet) {
-        // Находим врача по doctorId
+        // Находим врача по doctorId или используем данные из маршрутного листа
         const doctor = doctors.find(d => d.id === sheet.doctorId);
+        const specialty = doctor?.specialty || sheet.specialty || 'Не указано';
+        const doctorName = doctor?.name || (sheet.virtualDoctor ? undefined : 'Не найден');
+        
+        console.log(`Врач для листа ${index + 1}:`, {
+          doctorId: sheet.doctorId,
+          specialty: specialty,
+          doctorName: doctorName || 'Не назначен',
+          virtualDoctor: sheet.virtualDoctor || false
+        });
+        
         employeeInSheets.push({
           doctorId: sheet.doctorId,
-          specialty: doctor?.specialty || 'Не указано',
-          doctorName: doctor?.name,
+          specialty: specialty,
+          doctorName: doctorName,
           examinationDate: empInSheet.examinationDate,
-          status: empInSheet.status || 'pending'
+          status: empInSheet.status || 'pending',
+          virtualDoctor: sheet.virtualDoctor || false
         });
       }
     });
 
+    console.log('Врачи из маршрутных листов:', employeeInSheets);
+
     // Если есть врачи в маршрутных листах, возвращаем их
     if (employeeInSheets.length > 0) {
+      console.log('Используем врачей из маршрутных листов');
       return employeeInSheets;
     }
 
     // Если врачи еще не назначены, определяем специализации по вредным факторам
+    // и находим соответствующих врачей в клинике
+    console.log('Маршрутные листы пусты, используем fallback логику по вредным факторам');
+    
     if (employee.harmfulFactor) {
       const rules = resolveFactorRules(employee.harmfulFactor);
-      const specialties = new Set<string>();
+      const requiredSpecialties = new Set<string>();
       rules.forEach(rule => {
-        rule.specialties.forEach(spec => specialties.add(spec));
+        rule.specialties.forEach(spec => requiredSpecialties.add(spec));
       });
       
-      return Array.from(specialties).map(specialty => ({
-        doctorId: '',
-        specialty: specialty,
-        doctorName: undefined,
-        examinationDate: undefined,
-        status: 'pending'
-      }));
+      // Отладочная информация
+      console.log(`Fallback для сотрудника ${employee.name}:`, {
+        harmfulFactor: employee.harmfulFactor,
+        foundRules: rules.length,
+        allSpecialties: rules.flatMap(r => r.specialties),
+        uniqueSpecialties: Array.from(requiredSpecialties),
+        availableDoctors: doctors.map(d => `${d.name} (${d.specialty})`)
+      });
+      
+      // Находим врачей в клинике для каждой требуемой специализации
+      const routeInfo: Array<{
+        doctorId: string;
+        specialty: string;
+        doctorName?: string;
+        examinationDate?: string;
+        status: string;
+      }> = [];
+      
+      requiredSpecialties.forEach(specialty => {
+        // Ищем врача этой специализации в клинике
+        const doctor = doctors.find(d => d.specialty === specialty);
+        
+        routeInfo.push({
+          doctorId: doctor?.id || '',
+          specialty: specialty,
+          doctorName: doctor?.name,
+          examinationDate: undefined,
+          status: 'pending'
+        });
+      });
+      
+      console.log(`Fallback маршрут для ${employee.name}:`, routeInfo);
+      return routeInfo;
     }
 
     return null;
+  };
+
+  // Получаем лабораторные и функциональные исследования для сотрудника
+  const getEmployeeResearch = (): string => {
+    if (!employee || !employee.harmfulFactor) return '';
+    
+    const rules = resolveFactorRules(employee.harmfulFactor);
+    const personalizedResearchList: string[] = [];
+    
+    for (const rule of rules) {
+      if (rule.research && rule.research.trim()) {
+        const personalized = personalizeResearch(rule.research, employee);
+        if (personalized.trim().length > 0) {
+          personalizedResearchList.push(personalized);
+        }
+      }
+    }
+    
+    // Объединяем персонализированные исследования, убираем дубликаты
+    const uniqueResearch = Array.from(new Set(personalizedResearchList));
+    return uniqueResearch.join('; ') || '';
   };
 
   const getStatusBadge = (status: string) => {
@@ -323,9 +614,38 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
       </div>
 
       <div className="max-w-5xl mx-auto px-6 py-8">
+        {/* Если есть амбулаторная карта, показываем её */}
+        {ambulatoryCard ? (
+          <AmbulatoryCardView card={ambulatoryCard} contract={contract} doctors={doctors} />
+        ) : (
+          <>
         {/* Маршрутный лист */}
         {(() => {
           const routeInfo = getEmployeeRouteInfo();
+          
+          // Проверяем статус календарного плана
+          if (contract.calendarPlan?.status !== 'approved') {
+            return (
+              <div className="bg-white rounded-2xl border border-slate-200 p-6 mb-6">
+                <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
+                  <CalendarIcon className="w-5 h-5" />
+                  Маршрутный лист
+                </h2>
+                <div className="text-center py-8">
+                  <CalendarIcon className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+                  <p className="text-slate-500 mb-2">Маршрутный лист будет создан после утверждения календарного плана</p>
+                  <p className="text-sm text-slate-400">
+                    Статус плана: {
+                      contract.calendarPlan?.status === 'draft' ? 'На согласовании' :
+                      contract.calendarPlan?.status === 'rejected' ? 'Отклонен' :
+                      'Не заполнен'
+                    }
+                  </p>
+                </div>
+              </div>
+            );
+          }
+          
           return routeInfo && routeInfo.length > 0 && (
             <div className="bg-white rounded-2xl border border-slate-200 p-6 mb-6">
               <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
@@ -432,84 +752,25 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
           </div>
         </div>
 
-        {/* Осмотры врачей */}
-        {ambulatoryCard && Object.keys(ambulatoryCard.examinations).length > 0 && (
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 mb-6">
-            <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
-              <FileTextIcon className="w-5 h-5" />
-              Осмотры врачей
-            </h2>
-            <div className="space-y-4">
-              {Object.entries(ambulatoryCard.examinations).map(([specialty, examination]) => (
-                <div key={specialty} className="border border-slate-200 rounded-lg p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="font-semibold text-slate-900">{getDoctorName(specialty)}</h3>
-                    {examination.status === 'completed' && (
-                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold bg-green-100 text-green-700">
-                        <CheckShieldIcon className="w-3 h-3 mr-1" />
-                        Завершен
-                      </span>
-                    )}
-                  </div>
-                  {examination.status === 'completed' && (
-                    <>
-                      {examination.conclusion && (
-                        <div className="mb-3">
-                          <p className="text-xs text-slate-500 mb-1">Заключение:</p>
-                          <p className="text-sm text-slate-900">{examination.conclusion}</p>
-                        </div>
-                      )}
-                      {examination.recommendations && (
-                        <div>
-                          <p className="text-xs text-slate-500 mb-1">Рекомендации:</p>
-                          <p className="text-sm text-slate-900">{examination.recommendations}</p>
-                        </div>
-                      )}
-                      <p className="text-xs text-slate-400 mt-3">
-                        Дата осмотра: {new Date(examination.date).toLocaleDateString('ru-RU')}
-                      </p>
-                    </>
-                  )}
-                  {examination.status === 'pending' && (
-                    <p className="text-sm text-slate-500 italic">Ожидает осмотра</p>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Финальное заключение */}
-        {ambulatoryCard?.finalConclusion && (
-          <div className="bg-white rounded-2xl border border-slate-200 p-6">
-            <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
-              <CheckShieldIcon className="w-5 h-5" />
-              Финальное заключение
-            </h2>
-            <div className="space-y-3">
-              <div>
-                <p className="text-sm text-slate-500 mb-1">Статус:</p>
-                <div>{getStatusBadge(ambulatoryCard.finalConclusion.status)}</div>
+        {/* Лабораторные и функциональные исследования */}
+        {(() => {
+          const research = getEmployeeResearch();
+          return research && contract.calendarPlan?.status === 'approved' && (
+            <div className="bg-white rounded-2xl border border-slate-200 p-6 mb-6">
+              <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
+                <FileTextIcon className="w-5 h-5" />
+                Лабораторные и функциональные исследования
+              </h2>
+              <div className="bg-slate-50 rounded-lg p-4">
+                <p className="text-sm text-slate-900 leading-relaxed whitespace-pre-wrap">
+                  {research}
+                </p>
               </div>
-              {ambulatoryCard.finalConclusion.notes && (
-                <div>
-                  <p className="text-sm text-slate-500 mb-1">Примечания:</p>
-                  <p className="text-sm text-slate-900">{ambulatoryCard.finalConclusion.notes}</p>
-                </div>
-              )}
-              <p className="text-xs text-slate-400">
-                Дата: {new Date(ambulatoryCard.finalConclusion.date).toLocaleDateString('ru-RU')}
-              </p>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
-        {(!ambulatoryCard || Object.keys(ambulatoryCard.examinations || {}).length === 0) && (
-          <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
-            <FileTextIcon className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-            <p className="text-slate-500">Амбулаторная карта пока не заполнена</p>
-            <p className="text-sm text-slate-400 mt-2">Данные появятся после осмотра врачами</p>
-          </div>
+          </>
         )}
       </div>
     </div>

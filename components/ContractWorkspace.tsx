@@ -11,6 +11,7 @@ import EmployeeTableRow from './EmployeeTableRow';
 import ContingentSection from './ContingentSection';
 import { SigningControls, CommercialTermsCard, CalendarPlanSection, DocumentsSection } from './ContractComponents';
 import HarmfulFactorModal from './HarmfulFactorModal';
+import { processEmployeesForAutoRegistration } from '../utils/employeeRegistration';
 
 interface ContractWorkspaceProps {
   currentUser: UserProfile | null;
@@ -81,7 +82,6 @@ const ContractWorkspace: React.FC<ContractWorkspaceProps> = ({
     const exists = employees.some(emp => emp.id === employee.id);
     
     // Проверяем, есть ли телефон в примечании для автоматической регистрации
-    const { processEmployeesForAutoRegistration } = await import('../utils/employeeRegistration');
     const employeesToProcess = exists
       ? employees.map(emp => emp.id === employee.id ? employee : emp)
       : [...employees, employee];

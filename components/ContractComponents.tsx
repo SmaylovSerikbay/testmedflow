@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { Contract, UserProfile, Employee, ContractDocument, DoctorRouteSheet } from '../types';
+import { createRouteSheetsForAllDoctors, createRouteSheetsForAllSpecialties } from '../utils/routeSheetGenerator';
 import { LoaderIcon, PenIcon, CalendarIcon, CheckShieldIcon, FileTextIcon, FileSignatureIcon, UserMdIcon } from './Icons';
 import { FACTOR_RULES, FactorRule } from '../factorRules';
 import html2canvas from 'html2canvas';
@@ -346,115 +347,7 @@ export const CalendarPlanSection: React.FC<CalendarPlanSectionProps> = ({
       
       // Используем врачей из пропсов или из договора
       const contractDoctors = doctors.length > 0 ? doctors : (contract.doctors || []);
-      
-      // Создаем маршрутные листы для всех врачей клиники при утверждении плана
-      if (contractDoctors.length > 0 && employees.length > 0) {
-        // Функция для определения правил по вредным факторам
-        const resolveFactorRulesForDoctor = (text: string): FactorRule[] => {
-          if (!text || !text.trim()) return [];
-          const normalized = text.toLowerCase();
-          const foundRules: FactorRule[] = [];
-          const foundKeys = new Set<string>();
-          const pointRegex = /п\.?\s*(\d+)|пункт\s*(\d+)/gi;
-          let match;
-          const matches: Array<{ id: number; context: string }> = [];
-          
-          while ((match = pointRegex.exec(text)) !== null) {
-            const pointId = parseInt(match[1] || match[2], 10);
-            if (pointId && !isNaN(pointId)) {
-              const start = Math.max(0, match.index - 50);
-              const end = Math.min(text.length, match.index + match[0].length + 50);
-              const context = text.slice(start, end).toLowerCase();
-              matches.push({ id: pointId, context });
-            }
-          }
-          
-          matches.forEach(({ id }) => {
-            const rulesWithId = FACTOR_RULES.filter(r => r.id === id);
-            if (rulesWithId.length === 1) {
-              const rule = rulesWithId[0];
-              const key = rule.uniqueKey;
-              if (!foundKeys.has(key)) {
-                foundRules.push(rule);
-                foundKeys.add(key);
-              }
-            } else if (rulesWithId.length > 1) {
-              const selectedRule = rulesWithId[0];
-              const key = selectedRule.uniqueKey;
-              if (!foundKeys.has(key)) {
-                foundRules.push(selectedRule);
-                foundKeys.add(key);
-              }
-            }
-          });
-          
-          if (foundRules.length > 0) return foundRules;
-          
-          const matchingRules = FACTOR_RULES.map(rule => {
-            const matchingKeywords = rule.keywords.filter(kw => 
-              kw && normalized.includes(kw.toLowerCase())
-            );
-            return { rule, matchCount: matchingKeywords.length };
-          }).filter(item => item.matchCount > 0);
-          
-          if (matchingRules.length === 0) return [];
-          const maxMatch = Math.max(...matchingRules.map(m => m.matchCount));
-          const bestMatches = matchingRules
-            .filter(m => m.matchCount === maxMatch)
-            .map(m => m.rule);
-          return bestMatches.sort((a, b) => a.id - b.id).slice(0, 1);
-        };
-
-        // Создаем маршрутный лист для каждого врача
-        console.log('Creating route sheets for doctors:', contractDoctors.length, 'doctors,', employees.length, 'employees');
-        
-        for (const doctor of contractDoctors) {
-          if (!doctor.id || !doctor.specialty) {
-            console.log('Skipping doctor (no id or specialty):', doctor);
-            continue;
-          }
-          
-          // Определяем, каких сотрудников должен осмотреть этот врач
-          let relevantEmployees: Employee[];
-          
-          // Профпатолог осматривает всех
-          if (doctor.specialty === 'Профпатолог') {
-            relevantEmployees = employees;
-            console.log(`Профпатолог ${doctor.name}: осматривает всех ${relevantEmployees.length} сотрудников`);
-          } else {
-            // Для других врачей - только тех, у кого есть соответствующие вредные факторы
-            relevantEmployees = employees.filter(emp => {
-              const rules = resolveFactorRulesForDoctor(emp.harmfulFactor || '');
-              return rules.some(rule => rule.specialties.includes(doctor.specialty));
-            });
-            console.log(`Врач ${doctor.specialty} ${doctor.name}: осматривает ${relevantEmployees.length} сотрудников`);
-          }
-
-          if (relevantEmployees.length > 0) {
-            const routeSheet: DoctorRouteSheet = {
-              doctorId: doctor.id,
-              contractId: contract.id,
-              employees: relevantEmployees.map(emp => ({
-                employeeId: emp.id,
-                name: emp.name,
-                position: emp.position,
-                harmfulFactor: emp.harmfulFactor,
-                status: 'pending',
-              })),
-              createdAt: new Date().toISOString(),
-            };
-
-            const routeSheetKey = `${doctor.id}_${contract.id}`;
-            console.log(`Creating route sheet: ${routeSheetKey} for doctor ${doctor.name} (${doctor.specialty})`);
-            await set(ref(rtdb, `routeSheets/${routeSheetKey}`), routeSheet);
-            console.log(`Route sheet created successfully: ${routeSheetKey}`);
-          } else {
-            console.log(`No employees for doctor ${doctor.name} (${doctor.specialty})`);
-          }
-        }
-        
-        console.log('Finished creating route sheets');
-      }
+      console.log('Available doctors for route sheet creation:', contractDoctors.length, contractDoctors.map(d => `${d.name} (${d.specialty})`));
       
       const newDocs: ContractDocument[] = [
         {
@@ -478,10 +371,25 @@ export const CalendarPlanSection: React.FC<CalendarPlanSectionProps> = ({
           rejectReason: null,
         },
         documents: [...existingDocs, ...newDocs],
+        doctors: contractDoctors, // Сохраняем врачей в договоре
       });
 
+      // Создаем маршрутные листы для всех необходимых специализаций (включая отсутствующих врачей)
+      if (employees.length > 0) {
+        try {
+          console.log('Creating route sheets for all required specialties...');
+          await createRouteSheetsForAllSpecialties(contract.id, employees, contractDoctors);
+          console.log('Route sheets created for all required specialties');
+        } catch (error) {
+          console.error('Error creating route sheets:', error);
+          // Не показываем ошибку пользователю, так как основная операция прошла успешно
+        }
+      } else {
+        console.log('No employees available for route sheet creation');
+      }
+
       setIsApproveModalOpen(false);
-      showToast('success', 'План утверждён. Маршрутный лист и приказ сформированы.');
+      showToast('success', 'План утверждён. Маршрутные листы и приказ сформированы.');
     } catch (e) {
       console.error('Plan approve error', e);
       showToast('error', 'Не удалось утвердить план. Попробуйте ещё раз.');

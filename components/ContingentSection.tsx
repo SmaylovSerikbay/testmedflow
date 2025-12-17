@@ -894,19 +894,19 @@ const ContingentModal: React.FC<ContingentModalProps> = ({
         <div className="flex-1 overflow-y-auto overflow-x-hidden p-4">
           <table className="w-full text-[11px] text-left border-collapse table-fixed">
             <colgroup>
-              <col className="w-12" /> {/* № */}
-              <col className="w-[180px]" /> {/* ФИО */}
-              <col className="w-24" /> {/* Дата рождения */}
-              <col className="w-12" /> {/* Пол */}
-              <col className="w-[200px]" /> {/* Участок */}
-              <col className="w-[150px]" /> {/* Должность */}
-              <col className="w-20" /> {/* Общий стаж */}
-              <col className="w-24" /> {/* Стаж по должности */}
-              <col className="w-24" /> {/* Дата посл. МО */}
-              <col className="w-[180px]" /> {/* Вредность */}
-              <col className="w-[120px]" /> {/* Примечание */}
-              <col className="w-20" /> {/* Статус */}
-              <col className="w-28" /> {/* Действия */}
+              <col className="w-12" />
+              <col className="w-[180px]" />
+              <col className="w-24" />
+              <col className="w-12" />
+              <col className="w-[200px]" />
+              <col className="w-[150px]" />
+              <col className="w-20" />
+              <col className="w-24" />
+              <col className="w-24" />
+              <col className="w-[180px]" />
+              <col className="w-[120px]" />
+              <col className="w-20" />
+              <col className="w-28" />
             </colgroup>
             <thead className="bg-slate-50 text-slate-500 uppercase sticky top-0 z-20 shadow-sm">
               <tr>

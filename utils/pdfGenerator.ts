@@ -1,6 +1,100 @@
 import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
 import { Contract, Employee, Doctor } from '../types';
+import { FACTOR_RULES, FactorRule } from '../factorRules';
+
+// Функция определения правил по вредным факторам
+const resolveFactorRules = (text: string): FactorRule[] => {
+  if (!text || !text.trim()) return [];
+  
+  const normalized = text.toLowerCase();
+  const foundRules: FactorRule[] = [];
+  const foundKeys = new Set<string>();
+  
+  const pointRegex = /п\.?\s*(\d+)|пункт\s*(\d+)/gi;
+  let match: RegExpExecArray | null;
+  const matches: Array<{ id: number; context: string }> = [];
+  
+  while ((match = pointRegex.exec(text)) !== null) {
+    const pointId = parseInt(match[1] || match[2], 10);
+    if (pointId && !isNaN(pointId)) {
+      const start = Math.max(0, match.index - 50);
+      const end = Math.min(text.length, match.index + match[0].length + 50);
+      const context = text.slice(start, end).toLowerCase();
+      matches.push({ id: pointId, context });
+    }
+  }
+  
+  matches.forEach(({ id, context }) => {
+    const rulesWithId = FACTOR_RULES.filter(r => r.id === id);
+    
+    if (rulesWithId.length === 0) return;
+    
+    if (rulesWithId.length === 1) {
+      const rule = rulesWithId[0];
+      const key = rule.uniqueKey;
+      if (!foundKeys.has(key)) {
+        foundRules.push(rule);
+        foundKeys.add(key);
+      }
+      return;
+    }
+    
+    // Если найдено несколько правил с одинаковым ID, выбираем наиболее подходящее по контексту
+    let selectedRule = rulesWithId[0]; // По умолчанию первое
+    
+    // Ищем правило, которое лучше соответствует контексту
+    for (const rule of rulesWithId) {
+      const titleWords = rule.title.toLowerCase().split(/\s+/);
+      const contextWords = context.toLowerCase().split(/\s+/);
+      
+      // Подсчитываем совпадения слов между заголовком правила и контекстом
+      const matches = titleWords.filter(word => 
+        word.length > 3 && contextWords.some(cw => cw.includes(word) || word.includes(cw))
+      ).length;
+      
+      // Если найдено больше совпадений, выбираем это правило
+      if (matches > 0) {
+        const currentMatches = selectedRule.title.toLowerCase().split(/\s+/)
+          .filter(word => word.length > 3 && contextWords.some(cw => cw.includes(word) || word.includes(cw)))
+          .length;
+        
+        if (matches > currentMatches) {
+          selectedRule = rule;
+        }
+      }
+    }
+    
+    console.log(`Найдено ${rulesWithId.length} правил для пункта ${id}:`, 
+      rulesWithId.map(r => r.title.substring(0, 50) + '...'));
+    console.log(`Выбрано правило: ${selectedRule.title.substring(0, 50)}...`);
+    
+    const key = selectedRule.uniqueKey;
+    if (!foundKeys.has(key)) {
+      foundRules.push(selectedRule);
+      foundKeys.add(key);
+    }
+  });
+  
+  if (foundRules.length > 0) {
+    return foundRules;
+  }
+  
+  const matchingRules = FACTOR_RULES.map(rule => {
+    const matchingKeywords = rule.keywords.filter(kw => 
+      kw && normalized.includes(kw.toLowerCase())
+    );
+    return { rule, matchCount: matchingKeywords.length };
+  }).filter(item => item.matchCount > 0);
+  
+  if (matchingRules.length === 0) return [];
+  
+  const maxMatch = Math.max(...matchingRules.map(m => m.matchCount));
+  const bestMatches = matchingRules
+    .filter(m => m.matchCount === maxMatch)
+    .map(m => m.rule);
+  
+  return bestMatches.sort((a, b) => a.id - b.id).slice(0, 1);
+};
 
 // Настройка шрифтов для поддержки кириллицы
 // ВАЖНО: jsPDF по умолчанию не поддерживает кириллицу
@@ -22,6 +116,51 @@ const addTextWithWrap = (doc: jsPDF, text: string, x: number, y: number, maxWidt
   });
   
   return currentY;
+};
+
+// Автоматическое определение необходимых специалистов на основе вредных факторов
+const getRequiredSpecialtiesFromContract = (contract: Contract): string[] => {
+  if (!contract.employees || contract.employees.length === 0) return [];
+  
+  const allSpecialties = new Set<string>();
+  
+  // Профпатолог всегда нужен как председатель комиссии
+  allSpecialties.add('Профпатолог');
+  
+  contract.employees.forEach(employee => {
+    if (employee.harmfulFactor) {
+      const rules = resolveFactorRules(employee.harmfulFactor);
+      rules.forEach(rule => {
+        rule.specialties.forEach(specialty => {
+          allSpecialties.add(specialty);
+        });
+      });
+    }
+  });
+  
+  return Array.from(allSpecialties).sort();
+};
+
+// Автоматическое определение необходимых лабораторных исследований
+const getRequiredResearchFromContract = (contract: Contract): string[] => {
+  if (!contract.employees || contract.employees.length === 0) return [];
+  
+  const allResearch = new Set<string>();
+  
+  contract.employees.forEach(employee => {
+    if (employee.harmfulFactor) {
+      const rules = resolveFactorRules(employee.harmfulFactor);
+      rules.forEach(rule => {
+        if (rule.research && rule.research.trim()) {
+          // Разбиваем исследования по запятым и добавляем каждое
+          const researches = rule.research.split(/[,;]/).map(r => r.trim()).filter(r => r.length > 0);
+          researches.forEach(research => allResearch.add(research));
+        }
+      });
+    }
+  });
+  
+  return Array.from(allResearch).sort();
 };
 
 // Генерация маршрутного листа для клиники
@@ -56,6 +195,43 @@ export const generateClinicRouteSheetPDF = (contract: Contract, doctors: Doctor[
   
   doc.text(`Период: ${contract.calendarPlan?.startDate} - ${contract.calendarPlan?.endDate}`, 20, yPosition);
   yPosition += 15;
+  
+  // Автоматически определяем необходимые специализации
+  const requiredSpecialties = getRequiredSpecialtiesFromContract(contract);
+  const requiredResearch = getRequiredResearchFromContract(contract);
+  
+  // Необходимые специалисты на основе вредных факторов
+  if (requiredSpecialties.length > 0) {
+    doc.setFont('helvetica', 'bold');
+    doc.text('НЕОБХОДИМЫЕ СПЕЦИАЛИСТЫ (по вредным факторам):', 20, yPosition);
+    yPosition += 10;
+    
+    doc.setFont('helvetica', 'normal');
+    requiredSpecialties.forEach(specialty => {
+      doc.text(`• ${specialty}`, 20, yPosition);
+      yPosition += 7;
+    });
+    
+    yPosition += 10;
+  }
+  
+  // Необходимые лабораторные исследования
+  if (requiredResearch.length > 0) {
+    doc.setFont('helvetica', 'bold');
+    doc.text('НЕОБХОДИМЫЕ ИССЛЕДОВАНИЯ (по вредным факторам):', 20, yPosition);
+    yPosition += 10;
+    
+    doc.setFont('helvetica', 'normal');
+    requiredResearch.forEach(research => {
+      const lines = doc.splitTextToSize(`• ${research}`, 170);
+      lines.forEach((line: string) => {
+        doc.text(line, 20, yPosition);
+        yPosition += 6;
+      });
+    });
+    
+    yPosition += 10;
+  }
   
   // Порядок проведения медосмотра
   doc.setFont('helvetica', 'bold');
@@ -245,6 +421,9 @@ export const generateCommissionOrderPDF = (contract: Contract, doctors: Doctor[]
   doc.text(`Период: ${contract.calendarPlan?.startDate} - ${contract.calendarPlan?.endDate}`, 20, yPosition);
   yPosition += 15;
   
+  // Автоматически определяем необходимые специализации
+  const requiredSpecialties = getRequiredSpecialtiesFromContract(contract);
+  
   // Преамбула
   yPosition = addTextWithWrap(doc, 'В соответствии с требованиями законодательства Республики Казахстан о проведении периодических медицинских осмотров работников, занятых на работах с вредными и (или) опасными производственными факторами:', 20, yPosition, 170);
   yPosition += 15;
@@ -277,6 +456,7 @@ export const generateCommissionOrderPDF = (contract: Contract, doctors: Doctor[]
       yPosition += 7;
     });
   } else {
+    // Если врачи не переданы, используем автоматически определенные специализации
     doc.text('Председатель комиссии:', 25, yPosition);
     yPosition += 7;
     doc.text('Врач-профпатолог: _________________________', 30, yPosition);
@@ -284,9 +464,32 @@ export const generateCommissionOrderPDF = (contract: Contract, doctors: Doctor[]
     
     doc.text('Члены комиссии:', 25, yPosition);
     yPosition += 7;
-    doc.text('Терапевт: _________________________', 30, yPosition);
+    
+    // Показываем все необходимые специализации кроме профпатолога
+    const otherSpecialties = requiredSpecialties.filter(s => s !== 'Профпатолог');
+    if (otherSpecialties.length > 0) {
+      otherSpecialties.forEach(specialty => {
+        doc.text(`${specialty}: _________________________`, 30, yPosition);
+        yPosition += 7;
+      });
+    } else {
+      doc.text('Терапевт: _________________________', 30, yPosition);
+      yPosition += 7;
+    }
+  }
+  
+  // Добавляем информацию о необходимых специалистах
+  if (requiredSpecialties.length > 0) {
+    yPosition += 10;
+    doc.setFont('helvetica', 'bold');
+    doc.text('Необходимые специалисты согласно вредным факторам:', 25, yPosition);
     yPosition += 7;
-    doc.text('(Другие специалисты согласно вредным факторам)', 30, yPosition);
+    
+    doc.setFont('helvetica', 'normal');
+    requiredSpecialties.forEach(specialty => {
+      doc.text(`• ${specialty}`, 30, yPosition);
+      yPosition += 6;
+    });
   }
   
   yPosition += 15;

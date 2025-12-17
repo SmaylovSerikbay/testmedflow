@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { Doctor, UserProfile } from '../types';
 import { rtdb, ref, push, set, remove, get, query, orderByChild, equalTo } from '../services/firebase';
+import { updateRouteSheetsForNewDoctor } from '../utils/routeSheetGenerator';
 import { 
   UserMdIcon, PlusIcon, TrashIcon, PenIcon, LoaderIcon, CheckShieldIcon
 } from './Icons';
@@ -138,6 +139,19 @@ const DoctorsList: React.FC<DoctorsListProps> = ({
         }
         
         showToast('success', 'Врач успешно добавлен');
+        
+        // Обновляем маршрутные листы для нового врача
+        try {
+          await updateRouteSheetsForNewDoctor({
+            id: newDoctorId,
+            name: doctorData.name,
+            specialty: doctorData.specialty,
+            phone: cleanPhone || undefined,
+            isChairman: doctorData.isChairman
+          }, currentUser.uid);
+        } catch (error) {
+          console.error('Error updating route sheets for new doctor:', error);
+        }
       }
       setIsModalOpen(false);
       setEditingDoctor(null);

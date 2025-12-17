@@ -210,31 +210,69 @@ const useContracts = (currentUser: UserProfile | null) => {
   return contracts;
 };
 
-const useDoctors = (currentUser: UserProfile | null) => {
+const useDoctors = (currentUser: UserProfile | null, selectedContract: Contract | null) => {
   const [doctors, setDoctors] = useState<Doctor[]>([]);
 
   useEffect(() => {
-      if (!currentUser || currentUser.role !== 'clinic') return;
+      if (!currentUser) return;
 
-      const doctorsRef = ref(rtdb, `clinics/${currentUser.uid}/doctors`);
-      const unsubscribe = onValue(doctorsRef, (snapshot) => {
-          const data = snapshot.val();
-          if (data) {
-              const loadedDoctors: Doctor[] = Object.entries(data).map(([key, val]: any) => ({
-                  id: key,
-                  name: val.name,
-                  specialty: val.specialty,
-                  phone: val.phone || undefined,
-                  isChairman: val.isChairman
-              }));
-              setDoctors(loadedDoctors);
-          } else {
-              setDoctors([]);
+      let clinicUid: string | null = null;
+
+      // Определяем UID клиники в зависимости от роли пользователя
+      if (currentUser.role === 'clinic') {
+        clinicUid = currentUser.uid;
+      } else if (selectedContract && selectedContract.clinicBin) {
+        // Для организации или других ролей - ищем клинику по BIN из договора
+        const findClinicByBin = async () => {
+          try {
+            const usersRef = ref(rtdb, 'users');
+            const usersSnapshot = await get(usersRef);
+            if (usersSnapshot.exists()) {
+              const users = usersSnapshot.val();
+              const clinicUser = Object.values(users).find((u: any) => 
+                u.role === 'clinic' && u.bin === selectedContract.clinicBin
+              ) as any;
+              
+              if (clinicUser && clinicUser.uid) {
+                clinicUid = clinicUser.uid;
+                loadDoctorsForClinic(clinicUid);
+              }
+            }
+          } catch (error) {
+            console.error('Error finding clinic by BIN:', error);
           }
-      });
+        };
 
-      return () => unsubscribe();
-  }, [currentUser]);
+        findClinicByBin();
+        return; // Выходим, так как загрузка будет асинхронной
+      }
+
+      if (clinicUid) {
+        loadDoctorsForClinic(clinicUid);
+      }
+
+      function loadDoctorsForClinic(uid: string) {
+        const doctorsRef = ref(rtdb, `clinics/${uid}/doctors`);
+        const unsubscribe = onValue(doctorsRef, (snapshot) => {
+            const data = snapshot.val();
+            if (data) {
+                const loadedDoctors: Doctor[] = Object.entries(data).map(([key, val]: any) => ({
+                    id: key,
+                    name: val.name,
+                    specialty: val.specialty,
+                    phone: val.phone || undefined,
+                    isChairman: val.isChairman
+                }));
+                console.log('Loaded doctors for contract:', loadedDoctors.length, loadedDoctors.map(d => `${d.name} (${d.specialty})`));
+                setDoctors(loadedDoctors);
+            } else {
+                setDoctors([]);
+            }
+        });
+
+        return () => unsubscribe();
+      }
+  }, [currentUser, selectedContract?.clinicBin]);
 
   return doctors;
 };
@@ -269,7 +307,7 @@ const useToast = () => {
 const Dashboard: React.FC = () => {
   const { currentUser, isLoadingProfile } = useUserProfile();
   const contracts = useContracts(currentUser);
-  const doctors = useDoctors(currentUser);
+
   const { toast, showToast } = useToast();
 
   // --- GLOBAL STATE ---
@@ -290,6 +328,8 @@ const Dashboard: React.FC = () => {
   const selectedContract = useMemo(() => {
     return contracts.find(c => c.id === selectedContractId);
   }, [contracts, selectedContractId]);
+
+  const doctors = useDoctors(currentUser, selectedContract);
 
   const employees = useMemo(() => {
     return selectedContract?.employees || [];

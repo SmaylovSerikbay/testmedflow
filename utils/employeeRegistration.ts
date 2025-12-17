@@ -68,12 +68,16 @@ export async function autoRegisterEmployee(
       // Обновляем данные пользователя, если нужно
       const existingUser = users[userId] as UserProfile;
       if (existingUser.role !== 'employee' || existingUser.employeeId !== employee.id) {
+        console.log('🔄 Updating existing user to employee role:', userId, existingUser);
         await set(ref(rtdb, `users/${userId}`), {
           ...existingUser,
           role: 'employee',
           employeeId: employee.id,
           contractId: contractId,
         });
+        console.log('✅ Existing user updated to employee role');
+      } else {
+        console.log('👤 User already exists as employee:', userId);
       }
     } else {
       // Создаем нового пользователя
@@ -87,7 +91,9 @@ export async function autoRegisterEmployee(
         contractId: contractId,
       };
       
+      console.log('🔥 Creating new employee user:', userData);
       await set(ref(rtdb, `users/${userId}`), userData);
+      console.log('✅ Employee user created successfully in Firebase');
     }
     
     return { userId, phone };
@@ -117,6 +123,7 @@ export async function processEmployeesForAutoRegistration(
     const { userId, phone } = await autoRegisterEmployee(employee, contractId);
     
     if (userId && phone) {
+      console.log('✅ Employee will be updated with userId:', employee.name, 'userId:', userId);
       updatedEmployees.push({
         ...employee,
         phone: phone,
