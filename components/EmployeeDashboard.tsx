@@ -306,9 +306,9 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
               </p>
             </div>
             <div className="flex items-center gap-4">
-              <div className="text-right">
-                <p className="text-sm text-slate-600">Организация: {contract.clientName}</p>
-                <p className="text-sm text-slate-600">Клиника: {contract.clinicName}</p>
+            <div className="text-right">
+              <p className="text-sm text-slate-600">Организация: {contract.clientName}</p>
+              <p className="text-sm text-slate-600">Клиника: {contract.clinicName}</p>
               </div>
               <button
                 onClick={handleLogout}

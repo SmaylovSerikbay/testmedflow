@@ -75,15 +75,15 @@ const ContractsList: React.FC<ContractsListProps> = ({
                     : `${filteredContracts.length} из ${contracts.length} ${contracts.length === 1 ? 'договора' : 'договоров'}`}
                 </p>
               </div>
-              <button 
-                onClick={handleCreateContract}
+          <button 
+            onClick={handleCreateContract}
                 className="group relative inline-flex items-center gap-2 px-5 py-2.5 bg-slate-900 text-white rounded-xl font-semibold hover:bg-slate-800 transition-all duration-200 shadow-lg hover:shadow-xl hover:scale-105 active:scale-100"
-              >
+          >
                 <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
                 <PlusIcon className="w-4 h-4 relative z-10" />
                 <span className="relative z-10">Новый договор</span>
-              </button>
-            </div>
+          </button>
+        </div>
 
             {/* Search and Filter Bar */}
             <div className="flex flex-col sm:flex-row gap-3">
@@ -267,9 +267,9 @@ const ContractsGrid: React.FC<ContractsGridProps> = ({ contracts, currentUser, o
         const hasEmployees = employeesCount > 0;
         
         return (
-          <div 
-            key={contract.id} 
-            onClick={() => onContractSelect(contract.id)}
+        <div 
+          key={contract.id} 
+          onClick={() => onContractSelect(contract.id)}
             className="bg-white rounded-xl border border-slate-200 hover:border-blue-400 hover:shadow-lg transition-all cursor-pointer group overflow-hidden"
           >
             <div className="p-5">
@@ -281,20 +281,20 @@ const ContractsGrid: React.FC<ContractsGridProps> = ({ contracts, currentUser, o
                     contract.status === 'planning' ? 'bg-gradient-to-br from-amber-500 to-amber-600' :
                     contract.status === 'negotiation' ? 'bg-gradient-to-br from-blue-500 to-blue-600' :
                     'bg-gradient-to-br from-slate-700 to-slate-900'
-                  }`}>
+            }`}>
                     {currentUser?.role === 'organization' ? contract.clinicName?.[0] : contract.clientName?.[0]}
-                  </div>
+            </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-3 mb-2">
                       <div className="flex-1 min-w-0">
                         <h3 className="text-lg font-bold group-hover:text-blue-600 transition-colors truncate mb-1">
-                          {currentUser?.role === 'organization' ? contract.clinicName : contract.clientName}
-                        </h3>
+                {currentUser?.role === 'organization' ? contract.clinicName : contract.clientName}
+              </h3>
                         <p className="text-sm text-slate-500 font-mono">№{contract.number}</p>
-                      </div>
+            </div>
                       <StatusBadge status={contract.status} />
-                    </div>
-                    
+          </div>
+          
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-slate-600 mt-3">
                       <div className="flex items-center gap-1.5">
                         <span className="font-semibold text-slate-900">{contract.price?.toLocaleString()}</span>
@@ -322,9 +322,9 @@ const ContractsGrid: React.FC<ContractsGridProps> = ({ contracts, currentUser, o
                   </div>
                 </div>
                 <ChevronLeftIcon className="w-5 h-5 text-slate-300 rotate-180 flex-shrink-0 group-hover:text-blue-500 transition-colors mt-1" />
-              </div>
             </div>
           </div>
+        </div>
         );
       })}
     </div>
