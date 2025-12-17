@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { UserProfile, Contract, Employee, DoctorRouteSheet, DoctorExamination, AmbulatoryCard } from '../types';
 import { rtdb, ref, get, set, onValue, query, orderByChild, equalTo } from '../services/firebase';
 import { FACTOR_RULES, FactorRule } from '../factorRules';
-import { LoaderIcon, UserMdIcon, FileTextIcon, CheckShieldIcon } from './Icons';
+import { LoaderIcon, UserMdIcon, FileTextIcon, CheckShieldIcon, LogoutIcon } from './Icons';
 
 interface DoctorDashboardProps {
   currentUser: UserProfile;
@@ -337,6 +337,12 @@ const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ currentUser }) => {
     );
   }
 
+  const handleLogout = useCallback(() => {
+    localStorage.removeItem('medflow_uid');
+    localStorage.removeItem('medflow_phone');
+    window.location.reload();
+  }, []);
+
   // Показываем дашборд даже если маршрутный лист не найден
   if (!contract || !routeSheet) {
     return (
@@ -350,6 +356,13 @@ const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ currentUser }) => {
                   {currentUser.specialty}
                 </p>
               </div>
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-all"
+              >
+                <LogoutIcon className="w-4 h-4" />
+                Выход
+              </button>
             </div>
           </div>
         </div>
@@ -395,9 +408,18 @@ const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ currentUser }) => {
                 {currentUser.specialty} • Договор: {contract.number}
               </p>
             </div>
-            <div className="text-right">
-              <p className="text-sm text-slate-600">Организация: {contract.clientName}</p>
-              <p className="text-sm text-slate-600">Клиника: {contract.clinicName}</p>
+            <div className="flex items-center gap-4">
+              <div className="text-right">
+                <p className="text-sm text-slate-600">Организация: {contract.clientName}</p>
+                <p className="text-sm text-slate-600">Клиника: {contract.clinicName}</p>
+              </div>
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-all"
+              >
+                <LogoutIcon className="w-4 h-4" />
+                Выход
+              </button>
             </div>
           </div>
         </div>

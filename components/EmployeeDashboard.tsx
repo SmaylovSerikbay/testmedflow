@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { UserProfile, Contract, AmbulatoryCard, Doctor, DoctorRouteSheet } from '../types';
 import { rtdb, ref, get, onValue } from '../services/firebase';
-import { LoaderIcon, UserMdIcon, FileTextIcon, CheckShieldIcon, CalendarIcon, ClockIcon } from './Icons';
+import { LoaderIcon, UserMdIcon, FileTextIcon, CheckShieldIcon, CalendarIcon, ClockIcon, LogoutIcon } from './Icons';
 import { FACTOR_RULES, FactorRule } from '../factorRules';
 
 // Автоопределение нужных врачей по вредным факторам на основе FACTOR_RULES
@@ -288,6 +288,12 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
     }
   };
 
+  const handleLogout = () => {
+    localStorage.removeItem('medflow_uid');
+    localStorage.removeItem('medflow_phone');
+    window.location.reload();
+  };
+
   return (
     <div className="min-h-screen bg-slate-50">
       <div className="bg-white border-b border-slate-200">
@@ -299,9 +305,18 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
                 {employee.name} • {employee.position}
               </p>
             </div>
-            <div className="text-right">
-              <p className="text-sm text-slate-600">Организация: {contract.clientName}</p>
-              <p className="text-sm text-slate-600">Клиника: {contract.clinicName}</p>
+            <div className="flex items-center gap-4">
+              <div className="text-right">
+                <p className="text-sm text-slate-600">Организация: {contract.clientName}</p>
+                <p className="text-sm text-slate-600">Клиника: {contract.clinicName}</p>
+              </div>
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-all"
+              >
+                <LogoutIcon className="w-4 h-4" />
+                Выход
+              </button>
             </div>
           </div>
         </div>

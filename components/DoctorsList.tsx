@@ -191,16 +191,24 @@ const DoctorsList: React.FC<DoctorsListProps> = ({
   };
 
   return (
-    <main className="flex-1 flex flex-col relative overflow-hidden bg-slate-50">
-      <div className="p-8 max-w-5xl mx-auto w-full animate-fade-in-up">
-        <div className="flex justify-between items-center mb-8">
-          <h2 className="text-3xl font-bold tracking-tight">Врачи</h2>
+    <main className="flex-1 flex flex-col relative overflow-auto bg-slate-50">
+      <div className="p-6 w-full max-w-7xl mx-auto">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h2 className="text-2xl font-bold tracking-tight text-slate-900">Врачи</h2>
+            <p className="text-sm text-slate-500 mt-1">
+              {doctors.length === 0 
+                ? 'Нет врачей в клинике' 
+                : `${doctors.length} ${doctors.length === 1 ? 'врач' : doctors.length < 5 ? 'врача' : 'врачей'}`}
+            </p>
+          </div>
           <button 
             onClick={handleAddDoctor}
-            className="bg-slate-900 text-white px-6 py-3 rounded-xl font-bold hover:bg-black transition-transform active:scale-95 shadow-lg flex items-center gap-2"
+            className="group relative inline-flex items-center gap-2 px-5 py-2.5 bg-slate-900 text-white rounded-xl font-semibold hover:bg-slate-800 transition-all duration-200 shadow-lg hover:shadow-xl hover:scale-105 active:scale-100"
           >
-            <PlusIcon className="w-4 h-4" />
-            Добавить врача
+            <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
+            <PlusIcon className="w-4 h-4 relative z-10" />
+            <span className="relative z-10">Добавить врача</span>
           </button>
         </div>
 
@@ -236,18 +244,19 @@ interface EmptyStateProps {
 }
 
 const EmptyState: React.FC<EmptyStateProps> = ({ onAddDoctor }) => (
-  <div className="text-center py-20 bg-white rounded-3xl border border-dashed border-slate-300">
-    <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-400">
-      <UserMdIcon className="w-8 h-8" />
+  <div className="text-center py-16 bg-white rounded-2xl border-2 border-dashed border-slate-300">
+    <div className="w-16 h-16 bg-gradient-to-br from-blue-50 to-slate-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
+      <UserMdIcon className="w-8 h-8 text-slate-400" />
     </div>
-    <h3 className="text-lg font-bold text-slate-900">Нет врачей</h3>
-    <p className="text-slate-500 mb-6 max-w-md mx-auto">
-      Добавьте врачей в вашу клинику для работы с договорами.
+    <h3 className="text-lg font-bold text-slate-900 mb-2">Нет врачей</h3>
+    <p className="text-sm text-slate-500 mb-6 max-w-md mx-auto">
+      Добавьте врачей в вашу клинику для работы с договорами и проведения медицинских осмотров.
     </p>
     <button 
       onClick={onAddDoctor}
-      className="text-blue-600 font-bold hover:underline"
+      className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-xl text-sm font-semibold hover:from-blue-700 hover:to-blue-600 transition-all shadow-lg hover:shadow-xl"
     >
+      <PlusIcon className="w-4 h-4" />
       Добавить врача
     </button>
   </div>

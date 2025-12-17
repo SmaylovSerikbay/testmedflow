@@ -9,7 +9,7 @@ import {
   UploadIcon, LoaderIcon, SparklesIcon, LogoIcon, 
   FileTextIcon, CalendarIcon, UsersIcon, CheckShieldIcon,
   PenIcon, SettingsIcon, UserMdIcon, TrashIcon, PlusIcon,
-  BriefcaseIcon, ChevronLeftIcon, FileSignatureIcon, LinkIcon
+  BriefcaseIcon, ChevronLeftIcon, FileSignatureIcon, LinkIcon, LogoutIcon
 } from './Icons';
 import EmployeeModal from './EmployeeModal';
 import EmployeeTableRow from './EmployeeTableRow';
@@ -304,12 +304,12 @@ const Dashboard: React.FC = () => {
   }
 
   return (
-    <div className="flex h-screen bg-slate-50 font-sans text-slate-900">
+    <div className="flex flex-col h-screen bg-slate-50 font-sans text-slate-900">
       {/* Toast Notifications */}
       <ToastNotification toast={toast} onClose={() => showToast('info', '')} />
       
-      {/* Sidebar */}
-      <Sidebar 
+      {/* Compact Header */}
+      <Header 
         currentUser={currentUser}
         contracts={contracts}
         activeSidebarItem={activeSidebarItem}
@@ -328,7 +328,7 @@ const Dashboard: React.FC = () => {
         updateContract={updateContract}
         showToast={showToast}
       />
-             </div>
+    </div>
   );
 };
 
@@ -370,8 +370,8 @@ const ToastNotification: React.FC<ToastNotificationProps> = ({ toast, onClose })
   );
 };
 
-// --- SIDEBAR COMPONENT ---
-interface SidebarProps {
+// --- HEADER COMPONENT ---
+interface HeaderProps {
   currentUser: UserProfile | null;
   contracts: Contract[];
   activeSidebarItem: string;
@@ -379,7 +379,7 @@ interface SidebarProps {
   onContractSelect: (id: string | null) => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = React.memo(({ 
+const Header: React.FC<HeaderProps> = React.memo(({ 
   currentUser, 
   contracts, 
   activeSidebarItem, 
@@ -396,63 +396,92 @@ const Sidebar: React.FC<SidebarProps> = React.memo(({
     onContractSelect(null);
   }, [onSidebarItemChange, onContractSelect]);
 
-  return (
-      <aside className="w-64 bg-white border-r border-slate-200 hidden md:flex flex-col flex-shrink-0 z-20">
-        <div className="p-6 flex items-center gap-2 border-b border-slate-100">
-            <LogoIcon className="w-6 h-6 text-slate-900" />
-            <span className="font-bold text-lg tracking-tight">MedFlow</span>
-        </div>
-        
-        {/* User Profile Card */}
-        <div className="p-4">
-            <div className="bg-slate-900 rounded-xl p-4 text-white shadow-lg">
-                <div className="flex items-center gap-3 mb-3">
-                    <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-xs font-bold">
-                        {currentUser?.companyName[0]}
-                    </div>
-                    <div className="overflow-hidden">
-                        <p className="font-bold text-sm truncate">{currentUser?.companyName}</p>
-                      <p className="text-[10px] text-slate-400 uppercase">
-                        {currentUser?.role === 'organization' ? 'Заказчик' : 'Клиника'}
-                      </p>
-                    </div>
-                </div>
-                <div className="text-[10px] text-slate-400 font-mono bg-black/20 p-2 rounded-lg break-all">
-                    БИН: {currentUser?.bin}
-                </div>
-            </div>
-        </div>
+  const handleLogout = useCallback(() => {
+    localStorage.removeItem('medflow_uid');
+    localStorage.removeItem('medflow_phone');
+    window.location.reload();
+  }, []);
 
-        <nav className="flex-1 px-4 py-2 space-y-1">
+  return (
+    <header className="bg-white border-b border-slate-200 sticky top-0 z-30">
+      <div className="px-6 py-3">
+        <div className="flex items-center justify-between">
+          {/* Left: Logo and User Info */}
+          <div className="flex items-center gap-6">
+            <div className="flex items-center gap-2">
+              <LogoIcon className="w-5 h-5 text-slate-900" />
+              <span className="font-bold text-base tracking-tight">MedFlow</span>
+            </div>
+            
+            {currentUser && (
+              <div className="hidden md:flex items-center gap-3 pl-6 border-l border-slate-200">
+                <div className="w-8 h-8 rounded-full bg-slate-900 text-white flex items-center justify-center text-xs font-bold">
+                  {currentUser.companyName?.[0] || 'U'}
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-sm font-semibold text-slate-900 truncate max-w-[200px]">
+                    {currentUser.companyName}
+                  </span>
+                  <span className="text-[10px] text-slate-500 uppercase">
+                    {currentUser.role === 'organization' ? 'Заказчик' : 'Клиника'}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Center: Navigation Tabs */}
+          <nav className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
             <button 
               onClick={handleContractsClick}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                activeSidebarItem === 'contracts' ? 'bg-slate-50 text-blue-600' : 'text-slate-500 hover:bg-slate-50'
+              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                activeSidebarItem === 'contracts' 
+                  ? 'bg-white text-blue-600 shadow-sm' 
+                  : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-                <BriefcaseIcon className="w-4 h-4"/>
-                <span className="flex-1 text-left">Договоры</span>
-              <span className="bg-blue-100 text-blue-700 py-0.5 px-2 rounded-full text-[10px] font-bold">
-                {contracts.length}
-              </span>
+              <BriefcaseIcon className="w-4 h-4"/>
+              <span>Договоры</span>
+              {contracts.length > 0 && (
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                  activeSidebarItem === 'contracts' 
+                    ? 'bg-blue-100 text-blue-700' 
+                    : 'bg-slate-200 text-slate-700'
+                }`}>
+                  {contracts.length}
+                </span>
+              )}
             </button>
             {currentUser?.role === 'clinic' && (
-                <button 
-                  onClick={handleDoctorsClick}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                    activeSidebarItem === 'doctors' ? 'bg-slate-50 text-blue-600' : 'text-slate-500 hover:bg-slate-50'
-                  }`}
-                >
-                    <UserMdIcon className="w-4 h-4"/>
-                    <span className="flex-1 text-left">Врачи</span>
-                </button>
+              <button 
+                onClick={handleDoctorsClick}
+                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                  activeSidebarItem === 'doctors' 
+                    ? 'bg-white text-blue-600 shadow-sm' 
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <UserMdIcon className="w-4 h-4"/>
+                <span>Врачи</span>
+              </button>
             )}
-        </nav>
-      </aside>
+          </nav>
+
+          {/* Right: Logout */}
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-all"
+          >
+            <LogoutIcon className="w-4 h-4"/>
+            <span className="hidden sm:inline">Выход</span>
+          </button>
+        </div>
+      </div>
+    </header>
   );
 });
 
-Sidebar.displayName = 'Sidebar';
+Header.displayName = 'Header';
 
 // --- MAIN CONTENT COMPONENT ---
 interface MainContentProps {
@@ -478,41 +507,47 @@ const MainContent: React.FC<MainContentProps> = ({
 }) => {
   if (activeSidebarItem === 'contracts' && selectedContract) {
     return (
-      <React.Suspense fallback={<div className="flex items-center justify-center h-full"><LoaderIcon className="w-8 h-8 animate-spin text-slate-300" /></div>}>
-        <ContractWorkspace
-          currentUser={currentUser}
-          contract={selectedContract}
-          doctors={doctors}
-          onBack={() => onContractSelect(null)}
-          updateContract={updateContract}
-          showToast={showToast}
-        />
-      </React.Suspense>
+      <div className="flex-1 overflow-hidden">
+        <React.Suspense fallback={<div className="flex items-center justify-center h-full"><LoaderIcon className="w-8 h-8 animate-spin text-slate-300" /></div>}>
+          <ContractWorkspace
+            currentUser={currentUser}
+            contract={selectedContract}
+            doctors={doctors}
+            onBack={() => onContractSelect(null)}
+            updateContract={updateContract}
+            showToast={showToast}
+          />
+        </React.Suspense>
+      </div>
     );
   }
 
   if (activeSidebarItem === 'contracts') {
     return (
-      <React.Suspense fallback={<div className="flex items-center justify-center h-full"><LoaderIcon className="w-8 h-8 animate-spin text-slate-300" /></div>}>
-        <ContractsList
-          currentUser={currentUser}
-          contracts={contracts}
-          onContractSelect={onContractSelect}
-          showToast={showToast}
-        />
-      </React.Suspense>
+      <div className="flex-1 overflow-auto">
+        <React.Suspense fallback={<div className="flex items-center justify-center h-full"><LoaderIcon className="w-8 h-8 animate-spin text-slate-300" /></div>}>
+          <ContractsList
+            currentUser={currentUser}
+            contracts={contracts}
+            onContractSelect={onContractSelect}
+            showToast={showToast}
+          />
+        </React.Suspense>
+      </div>
     );
   }
 
   if (activeSidebarItem === 'doctors' && currentUser?.role === 'clinic') {
     return (
-      <React.Suspense fallback={<div className="flex items-center justify-center h-full"><LoaderIcon className="w-8 h-8 animate-spin text-slate-300" /></div>}>
-        <DoctorsList
-          currentUser={currentUser}
-          doctors={doctors}
-          showToast={showToast}
-        />
-      </React.Suspense>
+      <div className="flex-1 overflow-auto">
+        <React.Suspense fallback={<div className="flex items-center justify-center h-full"><LoaderIcon className="w-8 h-8 animate-spin text-slate-300" /></div>}>
+          <DoctorsList
+            currentUser={currentUser}
+            doctors={doctors}
+            showToast={showToast}
+          />
+        </React.Suspense>
+      </div>
     );
   }
 
