@@ -7,6 +7,8 @@ export interface FactorRule {
   keywords: string[];
   /** Врачи, которые должны участвовать в осмотре по этому фактору (как в Перечне, колонка 3) */
   specialties: string[];
+  /** Лабораторные и функциональные исследования (как в Перечне, колонка 4) */
+  research: string;
   /** Категория фактора для группировки */
   category: 'chemical' | 'profession' | 'physical' | 'biological' | 'other';
   /** Уникальный ключ для идентификации (id + title) */
@@ -156,11 +158,15 @@ export const FACTOR_RULES: FactorRule[] = (RAW_RULES as unknown as any[])
     const category = determineCategory(factorText);
     const uniqueKey = `${raw.id}_${factorText}`;
 
+    // Извлекаем исследования из сырых данных
+    const research = (raw.research || '').trim();
+
     return {
       id: raw.id as number,
       title: factorText,
       keywords: raw.keywords || [],
       specialties, // Список врачей из JSON или извлеченный из title
+      research, // Лабораторные и функциональные исследования
       category,
       uniqueKey,
     } as FactorRule;

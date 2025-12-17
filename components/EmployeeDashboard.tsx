@@ -1,7 +1,85 @@
 import React, { useState, useEffect } from 'react';
-import { UserProfile, Contract, AmbulatoryCard, Doctor } from '../types';
+import { UserProfile, Contract, AmbulatoryCard, Doctor, DoctorRouteSheet } from '../types';
 import { rtdb, ref, get, onValue } from '../services/firebase';
-import { LoaderIcon, UserMdIcon, FileTextIcon, CheckShieldIcon } from './Icons';
+import { LoaderIcon, UserMdIcon, FileTextIcon, CheckShieldIcon, CalendarIcon, ClockIcon } from './Icons';
+import { FACTOR_RULES, FactorRule } from '../factorRules';
+
+// Автоопределение нужных врачей по вредным факторам на основе FACTOR_RULES
+const resolveFactorRules = (text: string): FactorRule[] => {
+  if (!text || !text.trim()) return [];
+  
+  const normalized = text.toLowerCase();
+  const foundRules: FactorRule[] = [];
+  const foundKeys = new Set<string>();
+  
+  // Ищем все упоминания пунктов в тексте (п. 12, пункт 12, п12, п.12 и т.д.)
+  const pointRegex = /п\.?\s*(\d+)|пункт\s*(\d+)/gi;
+  let match;
+  const matches: Array<{ id: number; context: string }> = [];
+  
+  while ((match = pointRegex.exec(text)) !== null) {
+    const pointId = parseInt(match[1] || match[2], 10);
+    if (pointId && !isNaN(pointId)) {
+      const start = Math.max(0, match.index - 50);
+      const end = Math.min(text.length, match.index + match[0].length + 50);
+      const context = text.slice(start, end).toLowerCase();
+      matches.push({ id: pointId, context });
+    }
+  }
+  
+  matches.forEach(({ id, context }) => {
+    const rulesWithId = FACTOR_RULES.filter(r => r.id === id);
+    
+    if (rulesWithId.length === 0) return;
+    
+    if (rulesWithId.length === 1) {
+      const rule = rulesWithId[0];
+      const key = rule.uniqueKey;
+      if (!foundKeys.has(key)) {
+        foundRules.push(rule);
+        foundKeys.add(key);
+      }
+      return;
+    }
+    
+    let selectedRule = rulesWithId[0];
+    
+    if (context.includes('професси') || context.includes('работ')) {
+      const professionRule = rulesWithId.find(r => r.category === 'profession');
+      if (professionRule) selectedRule = professionRule;
+    } else if (context.includes('химическ') || context.includes('соединен')) {
+      const chemicalRule = rulesWithId.find(r => r.category === 'chemical');
+      if (chemicalRule) selectedRule = chemicalRule;
+    } else {
+      const professionRule = rulesWithId.find(r => r.category === 'profession');
+      if (professionRule) selectedRule = professionRule;
+    }
+    
+    const key = selectedRule.uniqueKey;
+    if (!foundKeys.has(key)) {
+      foundRules.push(selectedRule);
+      foundKeys.add(key);
+    }
+  });
+  
+  if (foundRules.length > 0) return foundRules;
+  
+  const matchingRules = FACTOR_RULES.map(rule => {
+    const matchingKeywords = rule.keywords.filter(kw => 
+      kw && normalized.includes(kw.toLowerCase())
+    );
+    return { rule, matchCount: matchingKeywords.length };
+  }).filter(item => item.matchCount > 0);
+  
+  if (matchingRules.length === 0) return [];
+  
+  const maxMatch = Math.max(...matchingRules.map(m => m.matchCount));
+  const bestMatches = matchingRules
+    .filter(m => m.matchCount === maxMatch)
+    .map(m => m.rule);
+  
+  return bestMatches.sort((a, b) => a.id - b.id).slice(0, 1);
+};
 
 interface EmployeeDashboardProps {
   currentUser: UserProfile;
@@ -12,6 +90,7 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
   const [employee, setEmployee] = useState<any>(null);
   const [ambulatoryCard, setAmbulatoryCard] = useState<AmbulatoryCard | null>(null);
   const [doctors, setDoctors] = useState<Doctor[]>([]);
+  const [routeSheets, setRouteSheets] = useState<DoctorRouteSheet[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -80,6 +159,33 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
           }
         });
 
+        // Загружаем маршрутные листы для этого договора
+        try {
+          const routeSheetsRef = ref(rtdb, 'routeSheets');
+          const routeSheetsSnapshot = await get(routeSheetsRef);
+          if (routeSheetsSnapshot.exists()) {
+            const allRouteSheets = routeSheetsSnapshot.val();
+            // Фильтруем маршрутные листы для этого договора, которые содержат этого сотрудника
+            const relevantSheets: DoctorRouteSheet[] = [];
+            Object.entries(allRouteSheets).forEach(([key, sheet]: [string, any]) => {
+              const routeSheet = { ...sheet } as DoctorRouteSheet;
+              // Проверяем, что это маршрутный лист для нашего договора
+              if (routeSheet.contractId === currentUser.contractId) {
+                // Проверяем, есть ли этот сотрудник в маршрутном листе
+                const hasEmployee = routeSheet.employees?.some(
+                  (emp: any) => emp.employeeId === currentUser.employeeId
+                );
+                if (hasEmployee) {
+                  relevantSheets.push(routeSheet);
+                }
+              }
+            });
+            setRouteSheets(relevantSheets);
+          }
+        } catch (error) {
+          console.error('Error loading route sheets:', error);
+        }
+
         return () => unsubscribe();
       } catch (error) {
         console.error('Error loading employee data:', error);
@@ -112,6 +218,61 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
   const getDoctorName = (specialty: string) => {
     const doctor = doctors.find(d => d.specialty === specialty);
     return doctor ? doctor.name : specialty;
+  };
+
+  // Получаем список врачей/специализаций для этого сотрудника
+  const getEmployeeRouteInfo = () => {
+    if (!employee) return null;
+
+    // Сначала пытаемся получить информацию из маршрутных листов
+    const employeeInSheets: Array<{
+      doctorId: string;
+      specialty: string;
+      doctorName?: string;
+      examinationDate?: string;
+      status: string;
+    }> = [];
+
+    routeSheets.forEach(sheet => {
+      const empInSheet = sheet.employees?.find(
+        (emp: any) => emp.employeeId === currentUser.employeeId
+      );
+      if (empInSheet) {
+        // Находим врача по doctorId
+        const doctor = doctors.find(d => d.id === sheet.doctorId);
+        employeeInSheets.push({
+          doctorId: sheet.doctorId,
+          specialty: doctor?.specialty || 'Не указано',
+          doctorName: doctor?.name,
+          examinationDate: empInSheet.examinationDate,
+          status: empInSheet.status || 'pending'
+        });
+      }
+    });
+
+    // Если есть врачи в маршрутных листах, возвращаем их
+    if (employeeInSheets.length > 0) {
+      return employeeInSheets;
+    }
+
+    // Если врачи еще не назначены, определяем специализации по вредным факторам
+    if (employee.harmfulFactor) {
+      const rules = resolveFactorRules(employee.harmfulFactor);
+      const specialties = new Set<string>();
+      rules.forEach(rule => {
+        rule.specialties.forEach(spec => specialties.add(spec));
+      });
+      
+      return Array.from(specialties).map(specialty => ({
+        doctorId: '',
+        specialty: specialty,
+        doctorName: undefined,
+        examinationDate: undefined,
+        status: 'pending'
+      }));
+    }
+
+    return null;
   };
 
   const getStatusBadge = (status: string) => {
@@ -147,6 +308,81 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
       </div>
 
       <div className="max-w-5xl mx-auto px-6 py-8">
+        {/* Маршрутный лист */}
+        {(() => {
+          const routeInfo = getEmployeeRouteInfo();
+          return routeInfo && routeInfo.length > 0 && (
+            <div className="bg-white rounded-2xl border border-slate-200 p-6 mb-6">
+              <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
+                <CalendarIcon className="w-5 h-5" />
+                Маршрутный лист
+              </h2>
+              <div className="space-y-3">
+                {routeInfo.map((routeInfoItem, index) => (
+                  <div key={index} className="border border-slate-200 rounded-lg p-4">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <h3 className="font-semibold text-slate-900 mb-2">
+                          {routeInfoItem.doctorName ? (
+                            <span>{routeInfoItem.doctorName} ({routeInfoItem.specialty})</span>
+                          ) : (
+                            <span>{routeInfoItem.specialty}</span>
+                          )}
+                        </h3>
+                        {routeInfoItem.examinationDate && (
+                          <div className="flex items-center gap-2 text-sm text-slate-600 mb-1">
+                            <ClockIcon className="w-4 h-4" />
+                            <span>
+                              Дата осмотра: {new Date(routeInfoItem.examinationDate).toLocaleDateString('ru-RU', {
+                                year: 'numeric',
+                                month: 'long',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })}
+                            </span>
+                          </div>
+                        )}
+                        {!routeInfoItem.examinationDate && contract.calendarPlan?.startDate && (
+                          <div className="flex items-center gap-2 text-sm text-slate-500">
+                            <CalendarIcon className="w-4 h-4" />
+                            <span>
+                              Период осмотра: {new Date(contract.calendarPlan.startDate).toLocaleDateString('ru-RU')} - {contract.calendarPlan.endDate ? new Date(contract.calendarPlan.endDate).toLocaleDateString('ru-RU') : '—'}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      <div>
+                        {routeInfoItem.status === 'completed' && (
+                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold bg-green-100 text-green-700">
+                            <CheckShieldIcon className="w-3 h-3 mr-1" />
+                            Завершен
+                          </span>
+                        )}
+                        {routeInfoItem.status === 'examined' && (
+                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-700">
+                            Осмотрен
+                          </span>
+                        )}
+                        {routeInfoItem.status === 'pending' && (
+                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-600">
+                            Ожидает
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {!routeInfoItem.doctorName && (
+                      <p className="text-xs text-slate-400 mt-2 italic">
+                        Врач еще не назначен. Осмотр будет проведен врачом указанной специализации.
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Информация о сотруднике */}
         <div className="bg-white rounded-2xl border border-slate-200 p-6 mb-6">
           <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">

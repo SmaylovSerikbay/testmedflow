@@ -13,6 +13,202 @@ import {
   generateHealthPlanPDF
 } from '../utils/pdfGenerator';
 
+// --- RESEARCH PARSING UTILITIES ---
+/**
+ * Парсит стаж из строки (например, "10 лет", "5 лет 3 месяца", "10")
+ * Возвращает количество лет (дробное число)
+ */
+const parseExperience = (experienceStr?: string): number => {
+  if (!experienceStr || !experienceStr.trim()) return 0;
+  
+  const str = experienceStr.trim().toLowerCase();
+  
+  // Ищем числа в строке
+  const yearMatch = str.match(/(\d+)\s*(?:лет|год|г\.?)/i);
+  const monthMatch = str.match(/(\d+)\s*(?:месяц|мес\.?)/i);
+  const simpleNumberMatch = str.match(/^(\d+)$/);
+  
+  let years = 0;
+  
+  if (yearMatch) {
+    years = parseInt(yearMatch[1], 10);
+  } else if (simpleNumberMatch) {
+    // Если просто число, считаем что это годы
+    years = parseInt(simpleNumberMatch[1], 10);
+  }
+  
+  if (monthMatch) {
+    const months = parseInt(monthMatch[1], 10);
+    years += months / 12;
+  }
+  
+  return years;
+};
+
+/**
+ * Определяет, является ли это предварительным осмотром
+ * (если lastMedDate отсутствует или очень старая)
+ */
+const isPreliminaryExam = (lastMedDate?: string): boolean => {
+  if (!lastMedDate) return true;
+  
+  try {
+    const lastDate = new Date(lastMedDate);
+    const now = new Date();
+    const diffYears = (now.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24 * 365);
+    
+    // Если последний осмотр был более 2 лет назад, считаем предварительным
+    return diffYears > 2;
+  } catch {
+    return true;
+  }
+};
+
+/**
+ * Парсит текст исследований и применяет условия к сотруднику
+ * Возвращает персонализированный список исследований
+ */
+const personalizeResearch = (researchText: string, employee: Employee): string => {
+  if (!researchText || !researchText.trim()) return '';
+  
+  const text = researchText.trim();
+  
+  // Получаем стаж сотрудника
+  const totalExp = parseExperience(employee.totalExperience);
+  const positionExp = parseExperience(employee.positionExperience);
+  const experience = positionExp > 0 ? positionExp : totalExp; // Используем стаж по должности, если есть
+  
+  const isPreliminary = isPreliminaryExam(employee.lastMedDate);
+  
+  // Сначала обрабатываем сложные случаи с встроенными условиями
+  // Разбиваем текст на части, сохраняя структуру
+  
+  // Шаг 1: Разбиваем на основные части по запятым и точкам с запятой
+  // Но учитываем, что условия могут быть встроены в текст
+  let processedText = text;
+  
+  // Обрабатываем условия "при стаже более X лет" - удаляем их, если условие не выполняется
+  const moreThanPattern = /при\s+стаже\s+более\s+(\d+)\s*(?:лет|год|г\.?)\s*,?\s*/gi;
+  let match;
+  while ((match = moreThanPattern.exec(text)) !== null) {
+    const threshold = parseInt(match[1], 10);
+    if (experience <= threshold) {
+      // Условие не выполняется - удаляем эту часть текста
+      // Находим границы фразы с условием
+      const start = match.index;
+      const end = match.index + match[0].length;
+      
+      // Ищем следующую запятую, точку или конец строки
+      const afterMatch = text.slice(end).match(/^[^,;.]*/);
+      const phraseEnd = end + (afterMatch ? afterMatch[0].length : 0);
+      
+      // Удаляем всю фразу с условием
+      processedText = processedText.replace(text.slice(start, phraseEnd), '').trim();
+    } else {
+      // Условие выполняется - удаляем только условие, оставляем исследование
+      processedText = processedText.replace(match[0], '').trim();
+    }
+  }
+  
+  // Обрабатываем условия "при стаже X-Y лет"
+  const rangePattern = /при\s+стаже\s+(\d+)\s*-\s*(\d+)\s*(?:лет|год|г\.?)\s*,?\s*/gi;
+  while ((match = rangePattern.exec(text)) !== null) {
+    const min = parseInt(match[1], 10);
+    const max = parseInt(match[2], 10);
+    if (experience < min || experience > max) {
+      const start = match.index;
+      const end = match.index + match[0].length;
+      const afterMatch = text.slice(end).match(/^[^,;.]*/);
+      const phraseEnd = end + (afterMatch ? afterMatch[0].length : 0);
+      processedText = processedText.replace(text.slice(start, phraseEnd), '').trim();
+    } else {
+      processedText = processedText.replace(match[0], '').trim();
+    }
+  }
+  
+  // Обрабатываем "при стаже более X-ти лет"
+  const moreThanTypPattern = /при\s+стаже\s+более\s+(\d+)\s*-?\s*ти\s*(?:лет|год|г\.?)\s*,?\s*/gi;
+  while ((match = moreThanTypPattern.exec(text)) !== null) {
+    const threshold = parseInt(match[1], 10);
+    if (experience <= threshold) {
+      const start = match.index;
+      const end = match.index + match[0].length;
+      const afterMatch = text.slice(end).match(/^[^,;.]*/);
+      const phraseEnd = end + (afterMatch ? afterMatch[0].length : 0);
+      processedText = processedText.replace(text.slice(start, phraseEnd), '').trim();
+    } else {
+      processedText = processedText.replace(match[0], '').trim();
+    }
+  }
+  
+  // Обрабатываем "со стажем до X лет"
+  const untilPattern = /со\s+стажем\s+до\s+(\d+)\s*(?:лет|год|г\.?)\s*,?\s*/gi;
+  while ((match = untilPattern.exec(text)) !== null) {
+    const threshold = parseInt(match[1], 10);
+    if (experience >= threshold) {
+      const start = match.index;
+      const end = match.index + match[0].length;
+      const afterMatch = text.slice(end).match(/^[^,;.]*/);
+      const phraseEnd = end + (afterMatch ? afterMatch[0].length : 0);
+      processedText = processedText.replace(text.slice(start, phraseEnd), '').trim();
+    } else {
+      processedText = processedText.replace(match[0], '').trim();
+    }
+  }
+  
+  // Обрабатываем "для подземных работников со стажем до X лет"
+  const undergroundPattern = /для\s+подземных\s+работников\s+со\s+стажем\s+до\s+(\d+)\s*(?:лет|год|г\.?)\s*,?\s*/gi;
+  while ((match = undergroundPattern.exec(text)) !== null) {
+    const threshold = parseInt(match[1], 10);
+    // Пока не можем определить, подземный ли работник, поэтому пропускаем такие условия
+    // Можно добавить проверку по должности или участку в будущем
+    processedText = processedText.replace(match[0], '').trim();
+  }
+  
+  // Обрабатываем условия предварительного/повторного осмотра
+  // Ищем фразы, которые начинаются с "при предварительном осмотре" и удаляем их, если это не предварительный осмотр
+  const preliminaryPattern = /при\s+предварительном\s+осмотре\s+[^,;.]*(?:,|;|$)/gi;
+  if (preliminaryPattern.test(processedText)) {
+    if (!isPreliminary) {
+      // Удаляем всю фразу с предварительным осмотром до следующей запятой или конца
+      processedText = processedText.replace(preliminaryPattern, '').trim();
+    } else {
+      // Удаляем только условие, оставляем исследование
+      processedText = processedText.replace(/при\s+предварительном\s+осмотре\s*,?\s*/gi, '').trim();
+    }
+  }
+  
+  const repeatedPattern = /при\s+повторном\s+осмотре\s+[^,;.]*(?:,|;|$)/gi;
+  if (repeatedPattern.test(processedText)) {
+    if (isPreliminary) {
+      processedText = processedText.replace(repeatedPattern, '').trim();
+    } else {
+      processedText = processedText.replace(/при\s+повторном\s+осмотре\s*,?\s*/gi, '').trim();
+    }
+  }
+  
+  // Удаляем фразы с неопределяемыми условиями (до следующей запятой или конца)
+  processedText = processedText.replace(/если\s+имеются\s+[^,;.]*(?:,|;|$)/gi, '').trim();
+  processedText = processedText.replace(/при\s+наличии\s+[^,;.]*(?:,|;|$)/gi, '').trim();
+  
+  // Удаляем фразы с временными условиями, которые мы не можем проверить
+  processedText = processedText.replace(/через\s+\d+\s+лет?\s+[^,;.]*(?:,|;|$)/gi, '').trim();
+  processedText = processedText.replace(/\d+\s+раз\s+в\s+\d+\s+лет?\s+[^,;.]*(?:,|;|$)/gi, '').trim();
+  processedText = processedText.replace(/для\s+подземных\s+работников\s+[^,;.]*(?:,|;|$)/gi, '').trim();
+  
+  // Очищаем от лишних запятых и точек с запятой
+  processedText = processedText.replace(/[,;]\s*[,;]+/g, ', ').trim();
+  processedText = processedText.replace(/^[,;]\s*/, '').trim();
+  processedText = processedText.replace(/\s*[,;]\s*$/, '').trim();
+  
+  // Если после обработки остался пустой текст, возвращаем пустую строку
+  if (!processedText || processedText.trim().length === 0) {
+    return '';
+  }
+  
+  return processedText;
+};
+
 // --- SIGNING CONTROLS ---
 interface SigningControlsProps {
   currentUser: UserProfile | null;
@@ -1010,6 +1206,19 @@ ${obsList}
                 // Объединяем всех врачей из всех найденных правил, убираем дубликаты
                 const allDoctors = rules.flatMap((r: any) => r.specialties || []);
                 const doctorsForEmployee = Array.from(new Set(allDoctors)).join(', ');
+                // Персонализируем исследования для каждого сотрудника с учетом стажа и других параметров
+                const personalizedResearchList: string[] = [];
+                for (const rule of rules) {
+                  if (rule.research && rule.research.trim()) {
+                    const personalized = personalizeResearch(rule.research, e);
+                    if (personalized.trim().length > 0) {
+                      personalizedResearchList.push(personalized);
+                    }
+                  }
+                }
+                // Объединяем персонализированные исследования, убираем дубликаты
+                const uniqueResearch = Array.from(new Set(personalizedResearchList));
+                const researchForEmployee = uniqueResearch.join('; ') || '—';
                 return `
                   <tr>
                     <td style="border: 1px solid #000; padding: 4px;">${idx + 1}</td>
@@ -1017,6 +1226,7 @@ ${obsList}
                     <td style="border: 1px solid #000; padding: 4px;">${(e.position || '-').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</td>
                     <td style="border: 1px solid #000; padding: 4px;">${(e.harmfulFactor || '-').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</td>
                     <td style="border: 1px solid #000; padding: 4px;">${(doctorsForEmployee || '—').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</td>
+                    <td style="border: 1px solid #000; padding: 4px; font-size: 8px;">${(researchForEmployee || '—').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</td>
                   </tr>
                 `;
               } catch (err) {
@@ -1028,16 +1238,17 @@ ${obsList}
                     <td style="border: 1px solid #000; padding: 4px;">${(e.position || '-').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</td>
                     <td style="border: 1px solid #000; padding: 4px;">${(e.harmfulFactor || '-').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</td>
                     <td style="border: 1px solid #000; padding: 4px;">—</td>
+                    <td style="border: 1px solid #000; padding: 4px;">—</td>
                   </tr>
                 `;
               }
             }).join('');
           } catch (err) {
             console.error('Error generating employees table:', err);
-            employeesTableRows = '<tr><td colspan="5" style="border: 1px solid #000; padding: 4px; text-align: center;">Ошибка при формировании списка работников</td></tr>';
+            employeesTableRows = '<tr><td colspan="6" style="border: 1px solid #000; padding: 4px; text-align: center;">Ошибка при формировании списка работников</td></tr>';
           }
         } else {
-          employeesTableRows = '<tr><td colspan="5" style="border: 1px solid #000; padding: 4px; text-align: center;">Список работников пуст</td></tr>';
+          employeesTableRows = '<tr><td colspan="6" style="border: 1px solid #000; padding: 4px; text-align: center;">Список работников пуст</td></tr>';
         }
         
         htmlContent = `
@@ -1083,6 +1294,7 @@ ${obsList}
                   <th style="border: 1px solid #000; padding: 4px; text-align: left;">Должность</th>
                   <th style="border: 1px solid #000; padding: 4px; text-align: left;">Вредность</th>
                   <th style="border: 1px solid #000; padding: 4px; text-align: left;">Врачи для осмотра</th>
+                  <th style="border: 1px solid #000; padding: 4px; text-align: left;">Лабораторные и функциональные исследования</th>
                 </tr>
               </thead>
               <tbody>
@@ -1622,6 +1834,7 @@ const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                   <th className="border border-slate-300 px-3 py-2 text-left">Должность</th>
                   <th className="border border-slate-300 px-3 py-2 text-left">Вредность</th>
                   <th className="border border-slate-300 px-3 py-2 text-left">Врачи для осмотра</th>
+                  <th className="border border-slate-300 px-3 py-2 text-left">Лабораторные и функциональные исследования</th>
                 </tr>
               </thead>
               <tbody>
@@ -1630,6 +1843,19 @@ const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                   // Объединяем всех врачей из всех найденных правил, убираем дубликаты
                   const allDoctors = rules.flatMap((r: FactorRule) => r.specialties || []);
                   const doctorsForEmployee = Array.from(new Set(allDoctors)).join(', ');
+                  // Персонализируем исследования для каждого сотрудника с учетом стажа и других параметров
+                  const personalizedResearchList: string[] = [];
+                  for (const rule of rules) {
+                    if (rule.research && rule.research.trim()) {
+                      const personalized = personalizeResearch(rule.research, e);
+                      if (personalized.trim().length > 0) {
+                        personalizedResearchList.push(personalized);
+                      }
+                    }
+                  }
+                  // Объединяем персонализированные исследования, убираем дубликаты
+                  const uniqueResearch = Array.from(new Set(personalizedResearchList));
+                  const researchForEmployee = uniqueResearch.join('; ') || '—';
                   return (
                     <tr key={e.id}>
                       <td className="border border-slate-300 px-3 py-2">{idx + 1}</td>
@@ -1638,6 +1864,9 @@ const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                       <td className="border border-slate-300 px-3 py-2 text-amber-700">{e.harmfulFactor || '-'}</td>
                       <td className="border border-slate-300 px-3 py-2 text-slate-700">
                         {doctorsForEmployee || '—'}
+                      </td>
+                      <td className="border border-slate-300 px-3 py-2 text-slate-700 text-[10px]">
+                        {researchForEmployee}
                       </td>
                     </tr>
                   );
