@@ -1,7 +1,6 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore, collection, getDocs, addDoc, updateDoc, doc, onSnapshot, query, where, setDoc, getDoc } from "firebase/firestore";
 import { getAuth, signInAnonymously } from "firebase/auth";
-import { getDatabase, ref, set, onValue, push, remove, update } from "firebase/database";
+import { getDatabase, ref, set, onValue, push, remove, update, get, query, orderByChild, equalTo, orderByKey, limitToFirst, limitToLast } from "firebase/database";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDs24Aac7yMQqPV3HSWZ-pHNXyhOc60JtE",
@@ -15,12 +14,11 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
 export const auth = getAuth(app);
 export const rtdb = getDatabase(app);
 
+// Экспортируем только функции Realtime Database
 export { 
-  collection, getDocs, addDoc, updateDoc, doc, onSnapshot, query, where, setDoc, getDoc,
   signInAnonymously,
-  ref, set, onValue, push, remove, update
+  ref, set, onValue, push, remove, update, get, query, orderByChild, equalTo, orderByKey, limitToFirst, limitToLast
 };

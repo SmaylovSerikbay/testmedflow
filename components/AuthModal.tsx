@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { WhatsAppIcon, LogoIcon, CheckShieldIcon, UsersIcon } from './Icons';
 import { UserRole } from '../types';
 import { sendWhatsAppMessage, generateOTP } from '../services/greenApi';
-import { auth, db, rtdb, signInAnonymously, doc, setDoc, ref, set, query, collection, where, getDocs } from '../services/firebase';
+import { auth, rtdb, signInAnonymously, ref, set, onValue, get, query, orderByChild, equalTo } from '../services/firebase';
 
 interface AuthModalProps {
   onSuccess: () => void;
@@ -72,16 +72,14 @@ const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
 
     const code = generateOTP();
     setGeneratedOtp(code);
-    console.log("OTP Code:", code); // Для тестов
 
     const message = `Ваш код подтверждения MedFlow: ${code}`;
 
     try {
-      // Отправляем сообщение без жесткого ожидания, чтобы UI не блокировался
+      // Отправляем сообщение асинхронно, не блокируем UI
       sendWhatsAppMessage(phone, message).catch(err => console.error("WA Error (non-blocking):", err));
       
-      // Имитируем небольшую задержку для UX
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Переходим сразу к вводу OTP - без задержки!
       setStep('OTP');
     } catch (err) {
       console.error(err);
@@ -106,51 +104,51 @@ const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
     try {
         const cleanPhone = phone.replace(/\D/g, '');
 
-        // 1. Гарантируем, что есть сессия Auth
-        if (!auth.currentUser) {
-           await signInAnonymously(auth);
-        }
-
-        // 2. Ищем пользователя в БД по номеру телефона
-        // ВАЖНО: Убрали таймаут (Promise.race), который вызывал ошибку при медленном интернете
-        const usersRef = collection(db, "users");
-        const q = query(usersRef, where("phone", "==", cleanPhone));
+        // Ищем пользователя в Realtime Database по телефону
+        const usersRef = ref(rtdb, 'users');
+        const phoneQuery = query(usersRef, orderByChild('phone'), equalTo(cleanPhone));
         
-        const querySnapshot = await getDocs(q);
-
-        if (!querySnapshot.empty) {
+        const snapshot = await get(phoneQuery);
+        
+        if (snapshot.exists() && snapshot.val()) {
             // --- СЦЕНАРИЙ: ПОЛЬЗОВАТЕЛЬ НАЙДЕН (АВТОРИЗАЦИЯ) ---
-            const userDoc = querySnapshot.docs[0];
-            const existingUid = userDoc.id;
-            const userData = userDoc.data();
+            const users = snapshot.val();
+            const existingUid = Object.keys(users)[0];
             
-            console.log("User found, logging in:", existingUid);
-
             // Обновляем localStorage, чтобы Dashboard подхватил правильный ID
             localStorage.setItem('medflow_uid', existingUid);
             localStorage.setItem('medflow_phone', cleanPhone);
             
-            // Если UID в Auth отличается от UID в базе данных (т.к. мы зашли анонимно),
-            // это нормально для демо-режима. Мы используем medflow_uid как источник правды.
-            
+            // Вызываем onSuccess сразу - не ждем ничего
             onSuccess();
             return;
         }
 
         // --- СЦЕНАРИЙ: ПОЛЬЗОВАТЕЛЬ НЕ НАЙДЕН (РЕГИСТРАЦИЯ) ---
-        console.log("User not found, redirecting to registration");
-        
-        // Генерируем новый UID или берем текущий анонимный
+        // Генерируем UID сразу, auth сделаем только при регистрации если нужно
         const newUid = auth.currentUser?.uid || 'user_' + Date.now();
         localStorage.setItem('medflow_uid', newUid);
         localStorage.setItem('medflow_phone', cleanPhone);
         
         setStep('REGISTER');
+        setLoading(false); // Убираем loading для регистрации
 
-    } catch (err) {
+    } catch (err: any) {
         console.error("Verification Critical Error:", err);
+        
+        // При таймауте разрешаем регистрацию - возможно пользователь новый
+        if (err?.message?.includes('Таймаут')) {
+          console.warn("Query timeout - allowing registration as fallback");
+          const cleanPhone = phone.replace(/\D/g, '');
+          const newUid = auth.currentUser?.uid || 'user_' + Date.now();
+          localStorage.setItem('medflow_uid', newUid);
+          localStorage.setItem('medflow_phone', cleanPhone);
+          setStep('REGISTER');
+          setLoading(false);
+          return;
+        }
+        
         setError("Ошибка соединения с базой данных. Попробуйте еще раз.");
-    } finally {
         setLoading(false);
     }
   };
@@ -178,14 +176,12 @@ const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
     setLoading(true);
     
     try {
+        // UID должен быть уже сохранен после проверки OTP, если нет - берем из auth
         let uid = localStorage.getItem('medflow_uid');
         if (!uid) {
-             if (auth.currentUser) {
-                 uid = auth.currentUser.uid;
-             } else {
-                 uid = 'user_' + Date.now();
-             }
-             localStorage.setItem('medflow_uid', uid);
+            // Если нет UID, быстро генерируем или берем из auth (не ждем signInAnonymously)
+            uid = auth.currentUser?.uid || 'user_' + Date.now();
+            localStorage.setItem('medflow_uid', uid);
         }
         
         const cleanPhone = phone.replace(/\D/g, '');
@@ -194,26 +190,28 @@ const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
             uid,
             phone: cleanPhone,
             role,
-            bin: cleanBin, // Сохраняем только цифры
+            bin: cleanBin,
             companyName,
             leaderName,
             createdAt: new Date().toISOString()
         };
 
-        // Сохраняем и в Firestore и в RTDB
-        await Promise.all([
-             setDoc(doc(db, "users", uid), userData),
-             set(ref(rtdb, 'users/' + uid), userData)
-        ]);
+        // Сохраняем пользователя в Realtime Database
+        const userRef = ref(rtdb, `users/${uid}`);
+        await set(userRef, userData);
         
+        // WhatsApp отправляем асинхронно, НЕ блокируем переход
         sendWhatsAppMessage(phone, `Добро пожаловать в MedFlow, ${leaderName}!`).catch(e => console.warn("WhatsApp skip"));
 
+        // Убираем loading перед переходом
+        setLoading(false);
+        
+        // Вызываем onSuccess после setLoading
         onSuccess();
 
     } catch (err) {
         console.error("Registration Error:", err);
         setError("Не удалось создать аккаунт. Проверьте интернет.");
-    } finally {
         setLoading(false);
     }
   };
