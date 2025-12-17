@@ -60,6 +60,10 @@ export interface Contract {
   employees: Employee[]; // Contingent (App 3)
   calendarPlan?: CalendarPlan;
   documents: ContractDocument[];
+
+  // Final Reports Content
+  finalActContent?: string;
+  healthPlanContent?: string;
 }
 
 export interface Doctor {

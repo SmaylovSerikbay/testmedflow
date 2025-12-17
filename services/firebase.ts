@@ -1,7 +1,7 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, getDocs, addDoc, updateDoc, doc, onSnapshot, query, where, setDoc, getDoc } from "firebase/firestore";
 import { getAuth, signInAnonymously } from "firebase/auth";
-import { getDatabase, ref, set } from "firebase/database";
+import { getDatabase, ref, set, onValue, push, remove, update } from "firebase/database";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDs24Aac7yMQqPV3HSWZ-pHNXyhOc60JtE",
@@ -22,5 +22,5 @@ export const rtdb = getDatabase(app);
 export { 
   collection, getDocs, addDoc, updateDoc, doc, onSnapshot, query, where, setDoc, getDoc,
   signInAnonymously,
-  ref, set 
+  ref, set, onValue, push, remove, update
 };

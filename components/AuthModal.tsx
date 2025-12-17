@@ -31,7 +31,6 @@ const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
   // --- INIT: Pre-auth with Firebase ---
   useEffect(() => {
       // Сразу стучимся в Firebase при открытии окна.
-      // Это убирает задержку при нажатии кнопок.
       signInAnonymously(auth).catch((err) => console.log("Pre-auth skipped:", err));
   }, []);
 
@@ -78,15 +77,14 @@ const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
     const message = `Ваш код подтверждения MedFlow: ${code}`;
 
     try {
-      // Пытаемся отправить, но не блокируем надолго
-      const sendPromise = sendWhatsAppMessage(phone, message);
-      const timeoutPromise = new Promise(resolve => setTimeout(resolve, 5000));
+      // Отправляем сообщение без жесткого ожидания, чтобы UI не блокировался
+      sendWhatsAppMessage(phone, message).catch(err => console.error("WA Error (non-blocking):", err));
       
-      await Promise.race([sendPromise, timeoutPromise]);
+      // Имитируем небольшую задержку для UX
+      await new Promise(resolve => setTimeout(resolve, 1000));
       setStep('OTP');
     } catch (err) {
       console.error(err);
-      // Если WhatsApp не сработал, все равно идем дальше (демо-режим)
       setStep('OTP');
     } finally {
       setLoading(false);
@@ -108,46 +106,50 @@ const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
     try {
         const cleanPhone = phone.replace(/\D/g, '');
 
-        // 1. Убеждаемся, что авторизация прошла
+        // 1. Гарантируем, что есть сессия Auth
         if (!auth.currentUser) {
            await signInAnonymously(auth);
         }
 
-        // 2. Ищем пользователя по ТЕЛЕФОНУ (игнорируя UID)
-        // Добавляем таймаут для чтения, чтобы не висело
+        // 2. Ищем пользователя в БД по номеру телефона
+        // ВАЖНО: Убрали таймаут (Promise.race), который вызывал ошибку при медленном интернете
         const usersRef = collection(db, "users");
         const q = query(usersRef, where("phone", "==", cleanPhone));
         
-        const fetchPromise = getDocs(q);
-        const timeoutPromise = new Promise<any>(resolve => setTimeout(() => resolve({ empty: true }), 3000)); // Если долго - считаем что юзера нет
-
-        const querySnapshot = await Promise.race([fetchPromise, timeoutPromise]);
+        const querySnapshot = await getDocs(q);
 
         if (!querySnapshot.empty) {
-            // ПОЛЬЗОВАТЕЛЬ НАЙДЕН -> ВХОД
+            // --- СЦЕНАРИЙ: ПОЛЬЗОВАТЕЛЬ НАЙДЕН (АВТОРИЗАЦИЯ) ---
             const userDoc = querySnapshot.docs[0];
-            const uid = userDoc.id;
+            const existingUid = userDoc.id;
+            const userData = userDoc.data();
             
-            // Сохраняем "личность" найденного пользователя
-            localStorage.setItem('medflow_uid', uid);
+            console.log("User found, logging in:", existingUid);
+
+            // Обновляем localStorage, чтобы Dashboard подхватил правильный ID
+            localStorage.setItem('medflow_uid', existingUid);
             localStorage.setItem('medflow_phone', cleanPhone);
+            
+            // Если UID в Auth отличается от UID в базе данных (т.к. мы зашли анонимно),
+            // это нормально для демо-режима. Мы используем medflow_uid как источник правды.
             
             onSuccess();
             return;
         }
 
-        // 3. ПОЛЬЗОВАТЕЛЯ НЕТ -> РЕГИСТРАЦИЯ
-        // Используем текущий UID
-        const newUid = auth.currentUser?.uid || 'offline_' + Date.now();
+        // --- СЦЕНАРИЙ: ПОЛЬЗОВАТЕЛЬ НЕ НАЙДЕН (РЕГИСТРАЦИЯ) ---
+        console.log("User not found, redirecting to registration");
+        
+        // Генерируем новый UID или берем текущий анонимный
+        const newUid = auth.currentUser?.uid || 'user_' + Date.now();
         localStorage.setItem('medflow_uid', newUid);
         localStorage.setItem('medflow_phone', cleanPhone);
         
         setStep('REGISTER');
 
     } catch (err) {
-        console.error("Verification Error:", err);
-        // В случае ошибки просто идем на регистрацию
-        setStep('REGISTER');
+        console.error("Verification Critical Error:", err);
+        setError("Ошибка соединения с базой данных. Попробуйте еще раз.");
     } finally {
         setLoading(false);
     }
@@ -157,8 +159,10 @@ const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    const cleanBin = bin.replace(/\D/g, '');
+    
     // Validation
-    if (!/^\d{12}$/.test(bin)) {
+    if (cleanBin.length !== 12) {
       setError('БИН/ИИН должен состоять из 12 цифр');
       return;
     }
@@ -174,51 +178,41 @@ const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
     setLoading(true);
     
     try {
-        // Подготовка данных
         let uid = localStorage.getItem('medflow_uid');
-        if (!uid || uid.startsWith('offline_')) {
-             // Пробуем получить реальный UID если он есть
+        if (!uid) {
              if (auth.currentUser) {
                  uid = auth.currentUser.uid;
-                 localStorage.setItem('medflow_uid', uid);
              } else {
-                 // Если нет - оставляем старый или генерим новый
-                 uid = uid || 'offline_user_' + Date.now();
+                 uid = 'user_' + Date.now();
              }
+             localStorage.setItem('medflow_uid', uid);
         }
         
-        const cleanPhone = phone.replace(/\D/g, '') || localStorage.getItem('medflow_phone') || '';
+        const cleanPhone = phone.replace(/\D/g, '');
 
         const userData = {
             uid,
             phone: cleanPhone,
             role,
-            bin,
+            bin: cleanBin, // Сохраняем только цифры
             companyName,
             leaderName,
             createdAt: new Date().toISOString()
         };
 
-        // Записываем данные с таймаутом (чтобы не зависало)
-        const dbPromise = Promise.all([
-             setDoc(doc(db, "users", uid), userData).catch(e => console.warn("Firestore save failed", e)),
-             set(ref(rtdb, 'users/' + uid), userData).catch(e => console.warn("RTDB save failed", e))
+        // Сохраняем и в Firestore и в RTDB
+        await Promise.all([
+             setDoc(doc(db, "users", uid), userData),
+             set(ref(rtdb, 'users/' + uid), userData)
         ]);
         
-        // Ждем максимум 2.5 секунды, потом пускаем дальше
-        const timeoutPromise = new Promise(resolve => setTimeout(resolve, 2500));
-        await Promise.race([dbPromise, timeoutPromise]);
-        
-        // Отправляем приветствие в фоне
         sendWhatsAppMessage(phone, `Добро пожаловать в MedFlow, ${leaderName}!`).catch(e => console.warn("WhatsApp skip"));
 
-        // УСПЕХ
         onSuccess();
 
     } catch (err) {
-        console.error("Registration Critical Error:", err);
-        // Все равно пускаем пользователя, даже если база отвалилась
-        onSuccess();
+        console.error("Registration Error:", err);
+        setError("Не удалось создать аккаунт. Проверьте интернет.");
     } finally {
         setLoading(false);
     }
@@ -308,7 +302,24 @@ const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
             <div className="space-y-4 pt-2">
                 <div className="group">
                   <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1.5 ml-3 tracking-widest">Идентификационный номер</label>
-                  <input type="text" value={bin} onChange={(e) => setBin(e.target.value.replace(/\D/g, '').slice(0, 12))} placeholder="БИН / ИИН (12 цифр)" className="w-full px-5 py-4 bg-slate-50 border border-slate-200 focus:border-slate-900 focus:bg-white rounded-2xl outline-none transition-all font-mono font-medium text-lg"/>
+                  <input 
+                    type="text" 
+                    value={bin} 
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/\D/g, '').slice(0, 12);
+                      setBin(val);
+                      if (val.length === 12 && error.includes('12 цифр')) {
+                         setError('');
+                      }
+                    }} 
+                    placeholder="БИН / ИИН (12 цифр)" 
+                    className={`w-full px-5 py-4 bg-slate-50 border ${bin.length > 0 && bin.length < 12 ? 'border-red-300 focus:border-red-500' : 'border-slate-200 focus:border-slate-900'} focus:bg-white rounded-2xl outline-none transition-all font-mono font-medium text-lg`}
+                  />
+                  {bin.length > 0 && bin.length < 12 && (
+                     <p className="text-red-500 text-xs mt-1.5 ml-3 font-medium animate-pulse">
+                        Неполный номер: {bin.length}/12 цифр
+                     </p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1.5 ml-3 tracking-widest">{role === 'clinic' ? 'Название клиники' : 'Юридическое название'}</label>
