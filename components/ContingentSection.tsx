@@ -6,6 +6,7 @@ import {
   UsersIcon, PlusIcon, UploadIcon, LoaderIcon, FileTextIcon, TrashIcon, PenIcon
 } from './Icons';
 import EmployeeTableRow from './EmployeeTableRow';
+import ConfirmDialog from './ConfirmDialog';
 import { processEmployeesForAutoRegistration, extractPhoneFromNote } from '../utils/employeeRegistration';
 
 interface ContingentSectionProps {
@@ -33,6 +34,19 @@ const ContingentSection: React.FC<ContingentSectionProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [fileError, setFileError] = useState('');
   const [isContingentModalOpen, setIsContingentModalOpen] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    variant?: 'danger' | 'warning' | 'info';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+    variant: 'danger'
+  });
 
   const handleProcessContingent = useCallback(async () => {
     if (!rawText.trim()) return;
@@ -98,12 +112,19 @@ const ContingentSection: React.FC<ContingentSectionProps> = ({
       'вредность', 'примечание', 'список', 'контингент',
       'руководителю', 'организации', 'клинике', 'согласовано',
       'санитарно-эпидемиологического', 'контроля', 'транспорте',
-      'куатовой', 'приложение', 'договору', 'работников'
+      'куатовой', 'приложение', 'договору', 'работников',
+      '№', 'номер', 'n', 'no'
     ];
     
     // Если строка содержит много ключевых слов заголовков - это заголовок
     const headerMatches = headerKeywords.filter(keyword => rowText.includes(keyword)).length;
-    if (headerMatches >= 2) return true; // Снизили порог до 2
+    if (headerMatches >= 2) return true;
+    
+    // Строгая проверка: если в строке есть слово "список" или "контингент" - это заголовок
+    if (rowText.includes('список') || rowText.includes('контингент') || 
+        nameCell.toLowerCase().includes('список') || nameCell.toLowerCase().includes('контингент')) {
+      return true;
+    }
     
     // Проверка на служебные фразы в начале строки
     const servicePhrases = [
@@ -116,9 +137,13 @@ const ContingentSection: React.FC<ContingentSectionProps> = ({
       return true;
     }
     
-    // Если первая ячейка содержит только заглавные буквы и цифры/символы - возможно заголовок
-    if (firstCell && firstCell === firstCell.toUpperCase() && firstCell.length > 3) {
-      return true;
+    // Если первая ячейка содержит только заглавные буквы и это одно слово длиннее 3 символов - заголовок
+    if (firstCell && firstCell === firstCell.toUpperCase() && 
+        firstCell.split(/\s+/).length === 1 && firstCell.length > 3) {
+      // Исключаем только если это не похоже на ФИО
+      if (!/[а-яё]/i.test(firstCell)) { // Если нет русских букв - точно заголовок
+        return true;
+      }
     }
     
     // Если строка содержит только пустые значения или дефисы
@@ -149,11 +174,14 @@ const ContingentSection: React.FC<ContingentSectionProps> = ({
       'транспорте', 'куатовой', 'приложение', 'договору',
       'работников', 'фио', 'дата рождения', 'пол', 'участок',
       'должность', 'стаж', 'медосмотр', 'вредность', 'примечание',
-      'согласовано:', 'руководителю:', 'организации:', 'клинике:'
+      'согласовано:', 'руководителю:', 'организации:', 'клинике:',
+      'list', 'contingent', 'fio', 'name'
     ];
     
-    // Специальная проверка на "СПИСОК" - очень часто встречается в шапках
-    if (nameNormalized === 'список' || nameUpper === 'СПИСОК' || name === 'СПИСОК') {
+    // СТРОГАЯ проверка на "СПИСОК" - в любом виде
+    if (nameNormalized === 'список' || nameUpper === 'СПИСОК' || name === 'СПИСОК' || 
+        nameNormalized === 'list' || nameUpper === 'LIST' || name === 'LIST' ||
+        nameNormalized.startsWith('список') || nameLower.startsWith('list')) {
       return false;
     }
     
@@ -162,31 +190,44 @@ const ContingentSection: React.FC<ContingentSectionProps> = ({
       return false;
     }
     
-    // Проверка на включение служебных слов
-    if (exactInvalidWords.some(pattern => nameLower.includes(pattern))) {
+    // Проверка на включение служебных слов - ОЧЕНЬ строгая
+    const invalidPatterns = [
+      'список', 'контингент', 'руководителю', 'организации', 'клинике',
+      'согласовано', 'приложение', 'договору', 'работников'
+    ];
+    if (invalidPatterns.some(pattern => nameLower.includes(pattern))) {
       return false;
     }
     
     // Если имя состоит только из заглавных букв и это одно слово - вероятно заголовок
-    // Особенно строгая проверка для "СПИСОК"
     if (name === nameUpper && name.split(/\s+/).length === 1) {
-      // Если это "СПИСОК" - точно пропускаем
+      // Если это "СПИСОК" или "LIST" - точно пропускаем
       if (name === 'СПИСОК' || name === 'LIST') {
         return false;
       }
-      // Для других слов - если длиннее 3 символов, пропускаем
-      if (name.length > 3) {
+      // Для других слов - если длиннее 2 символов, пропускаем (вероятно заголовок)
+      if (name.length > 2) {
         return false;
       }
     }
     
     // Проверяем, что имя выглядит как ФИО (содержит пробелы или несколько слов)
-    // Или хотя бы начинается с заглавной буквы
     const nameParts = name.split(/\s+/).filter(p => p.length > 0);
     
-    // Если это одно слово длиннее 30 символов - вероятно служебный текст
-    if (nameParts.length === 1 && name.length > 30) {
-      return false;
+    // Если это одно слово - должно быть очень коротким (инициал или аббревиатура)
+    if (nameParts.length === 1) {
+      // Если одно слово длиннее 15 символов - вероятно служебный текст
+      if (name.length > 15) {
+        return false;
+      }
+      // Если одно слово и все заглавные длиннее 2 символов - пропускаем
+      if (name === nameUpper && name.length > 2) {
+        return false;
+      }
+      // Если одно слово начинается с одной буквы и точки (типа "A.") - пропускаем
+      if (/^[А-ЯA-Z]\./.test(name) && name.length <= 3) {
+        return false;
+      }
     }
     
     // Если имя состоит из одного слова и содержит много дефисов/подчеркиваний - пропускаем
@@ -196,18 +237,41 @@ const ContingentSection: React.FC<ContingentSectionProps> = ({
     
     // Проверяем, что имя начинается с заглавной буквы (для кириллицы и латиницы)
     const firstChar = name[0];
-    if (!/[А-ЯA-Z]/.test(firstChar)) {
+    if (!/[А-ЯA-ZЁ]/.test(firstChar)) {
       // Если не начинается с заглавной, но содержит пробелы - возможно валидно
       if (nameParts.length < 2) return false;
     }
     
+    // Дополнительная проверка: имя должно содержать хотя бы одну русскую или латинскую букву
+    if (!/[а-яёa-z]/i.test(name)) {
+      return false;
+    }
+    
+    // Проверяем, что строка содержит реальные данные (не только имя)
+    // Если все остальные поля пустые или содержат только дефисы - возможно это заголовок
+    const hasOtherData = [
+      colIndexes.dob || 2,
+      colIndexes.site || 4,
+      colIndexes.position || 5,
+      colIndexes.totalExperience || 6,
+      colIndexes.positionExperience || 7
+    ].some(idx => {
+      const val = String(row[idx] || '').trim();
+      return val && val !== '-' && val !== '—' && val.length > 0;
+    });
+    
+    // Если имя очень короткое (меньше 5 символов) и нет других данных - пропускаем
+    if (name.length < 5 && !hasOtherData) {
+      return false;
+    }
+    
     // Проверяем дату рождения, если она есть
     const dob = String(row[colIndexes.dob || 2] || '').trim();
-    if (dob && dob !== '-') {
+    if (dob && dob !== '-' && dob !== '—') {
       // Дата должна быть в формате ДД.ММ.ГГГГ или похожем
       const datePattern = /^\d{1,2}[.\/-]\d{1,2}[.\/-]\d{2,4}$/;
-      if (!datePattern.test(dob) && dob.length > 10) {
-        // Если это не дата и длиннее 10 символов - возможно служебный текст
+      // Если это не дата и длиннее 15 символов - возможно служебный текст
+      if (!datePattern.test(dob) && dob.length > 15) {
         return false;
       }
     }
@@ -280,28 +344,173 @@ const ContingentSection: React.FC<ContingentSectionProps> = ({
         return;
       }
 
-      // Умно определяем индексы колонок
-      const colIndexes = findColumnIndexes(jsonData);
-      
-      // Находим первую строку с данными (после заголовков)
-      let dataStartIndex = 0;
-      for (let i = 0; i < Math.min(10, jsonData.length); i++) {
-        if (!isHeaderRow(jsonData[i]) && jsonData[i][colIndexes.name || 1]) {
-          dataStartIndex = i;
+      // Ищем строку с заголовками таблицы (ФИО, Дата рождения и т.д.)
+      let headerRowIndex = -1;
+      for (let i = 0; i < Math.min(20, jsonData.length); i++) {
+        const row = jsonData[i];
+        const rowText = row.map(cell => String(cell || '').toLowerCase().trim()).join(' ');
+        
+        // Ищем строку, которая содержит ключевые слова заголовков
+        const hasFio = rowText.includes('фио') || rowText.includes('ф.и.о');
+        const hasDob = rowText.includes('дата') && (rowText.includes('рожд') || rowText.includes('рожден'));
+        const hasPosition = rowText.includes('должность');
+        
+        // Если нашли строку с заголовками (минимум 2 ключевых слова)
+        if ((hasFio && hasDob) || (hasFio && hasPosition) || (hasDob && hasPosition)) {
+          headerRowIndex = i;
           break;
         }
       }
 
-      // Фильтруем строки: пропускаем заголовки и пустые строки
-      const rows = jsonData.slice(dataStartIndex).filter(row => {
-        // Пропускаем заголовки
-        if (isHeaderRow(row)) return false;
-        
-        // Проверяем валидность данных сотрудника
-        if (!isValidEmployeeRow(row, colIndexes)) return false;
-        
-        return true;
+      // Если не нашли заголовки, используем первую строку как заголовки
+      if (headerRowIndex === -1) {
+        headerRowIndex = 0;
+      }
+
+      // Определяем индексы колонок из строки заголовков
+      const headerRow = jsonData[headerRowIndex];
+      const colIndexes: { [key: string]: number } = {};
+      
+      headerRow.forEach((cell, idx) => {
+        const cellText = String(cell || '').toLowerCase().trim();
+        if (cellText.includes('фио') || cellText.includes('ф.и.о')) colIndexes.name = idx;
+        else if (cellText.includes('дата') && cellText.includes('рожд')) colIndexes.dob = idx;
+        else if (cellText === 'пол' || cellText.includes('пол')) colIndexes.gender = idx;
+        else if (cellText.includes('участок') || cellText.includes('объект')) colIndexes.site = idx;
+        else if (cellText.includes('должность')) colIndexes.position = idx;
+        else if (cellText.includes('общий') && cellText.includes('стаж')) colIndexes.totalExperience = idx;
+        else if (cellText.includes('стаж') && cellText.includes('должност')) colIndexes.positionExperience = idx;
+        else if (cellText.includes('дата') && (cellText.includes('мо') || cellText.includes('мед'))) colIndexes.lastMedDate = idx;
+        else if (cellText.includes('вредность') || cellText.includes('проф')) colIndexes.harmfulFactor = idx;
+        else if (cellText.includes('примечание')) colIndexes.note = idx;
       });
+
+      // Если не нашли колонку с именем, используем стандартные индексы
+      if (colIndexes.name === undefined) {
+        colIndexes.name = 1;
+        colIndexes.dob = 2;
+        colIndexes.gender = 3;
+        colIndexes.site = 4;
+        colIndexes.position = 5;
+        colIndexes.totalExperience = 6;
+        colIndexes.positionExperience = 7;
+        colIndexes.lastMedDate = 8;
+        colIndexes.harmfulFactor = 9;
+        colIndexes.note = 10;
+      }
+
+      // Берем все строки ПОСЛЕ строки заголовков
+      const dataRows = jsonData.slice(headerRowIndex + 1);
+      
+      // Фильтруем строки - берем только реальные данные сотрудников
+      // ОСТАНАВЛИВАЕМСЯ при встрече футера/подписи
+      const rows: any[][] = [];
+      
+      for (const row of dataRows) {
+        // Проверяем всю строку на наличие футера/подписи - это КОНЕЦ таблицы
+        const rowText = row.map(cell => String(cell || '').toLowerCase().trim()).join(' ');
+        const name = String(row[colIndexes.name || 1] || '').trim();
+        const nameLower = name.toLowerCase();
+        
+        // СТРОГАЯ проверка на футер/подпись - только если это действительно футер
+        // Футер обычно содержит должность в имени или в строке целиком
+        const isFooter = 
+          // Проверка на полные фразы футера (должны быть вместе)
+          (rowText.includes('менеджер по персоналу') && rowText.includes('отдела')) ||
+          (rowText.includes('менеджер по') && rowText.includes('персоналу') && rowText.includes('отдела')) ||
+          (nameLower.includes('менеджер по персоналу') && nameLower.includes('отдела')) ||
+          // Проверка на подпись/согласование (должны быть в начале или отдельно)
+          (rowText.startsWith('согласовано') || rowText.startsWith('утверждено')) ||
+          (rowText.includes('подпись') && rowText.length < 50) ||
+          // Проверка на должность в имени (если имя содержит "менеджер по" и "отдела")
+          (nameLower.includes('менеджер по') && nameLower.includes('отдела') && name.length > 30);
+        
+        // Если это точно футер - ОСТАНАВЛИВАЕМСЯ (это конец таблицы)
+        if (isFooter) {
+          break; // Прекращаем обработку, дальше идут подписи/футеры
+        }
+        
+        // Пропускаем полностью пустые строки
+        const hasAnyData = row.some(cell => {
+          const val = String(cell || '').trim();
+          return val && val !== '-' && val !== '—' && val.length > 0;
+        });
+        if (!hasAnyData) continue;
+        
+        // Пропускаем строки, где имя пустое или слишком короткое
+        if (!name || name.length < 3) continue;
+        
+        const nameUpper = name.toUpperCase();
+        const nameNormalized = nameLower.replace(/\s+/g, ' ').trim();
+        
+        // Список служебных слов, которые точно не являются ФИО
+        const invalidNames = [
+          'список', 'контингент', 'фио', 'list', 'contingent', 'fio',
+          'руководителю', 'организации', 'клинике', 'согласовано',
+          'приложение', 'договору', 'работников', 'дата рождения',
+          'пол', 'участок', 'должность', 'стаж', 'медосмотр',
+          'вредность', 'примечание', 'name', 'n', '№', 'номер',
+          'менеджер', 'руководитель', 'директор', 'начальник'
+        ];
+        
+        // СТРОГАЯ проверка на точное совпадение
+        if (invalidNames.includes(nameNormalized) || invalidNames.includes(nameLower)) {
+          continue;
+        }
+        
+        // СТРОГАЯ проверка на включение служебных слов
+        const invalidPatterns = ['список', 'контингент', 'фио', 'list', 'contingent', 'fio', 'менеджер', 'руководитель'];
+        if (invalidPatterns.some(word => nameLower.includes(word) || nameNormalized.includes(word))) {
+          continue;
+        }
+        
+        // Если имя содержит слова "менеджер", "руководитель", "директор" - это подпись, пропускаем
+        if (nameLower.includes('менеджер') || nameLower.includes('руководитель') || 
+            nameLower.includes('директор') || nameLower.includes('начальник') ||
+            nameLower.includes('manager') || nameLower.includes('director')) {
+          continue;
+        }
+        
+        // Если имя все заглавными и одно слово длиннее 2 символов - пропускаем
+        if (name === nameUpper && name.split(/\s+/).length === 1 && name.length > 2) {
+          continue;
+        }
+        
+        // Если имя начинается с одной буквы и точки (типа "A.") - пропускаем
+        if (/^[А-ЯA-Z]\./.test(name) && name.length <= 5) {
+          continue;
+        }
+        
+        // Проверяем, что имя содержит хотя бы одну букву
+        if (!/[а-яёa-z]/i.test(name)) {
+          continue;
+        }
+        
+        // Проверяем всю строку на наличие служебных слов (не только в имени)
+        const serviceWordsInRow = ['список', 'контингент', 'руководителю', 'организации', 'согласовано', 'приложение', 'менеджер по'];
+        if (serviceWordsInRow.some(word => rowText.includes(word) && rowText.split(word).length > 1)) {
+          // Если в строке есть служебное слово - пропускаем
+          continue;
+        }
+        
+        // Проверяем, что имя выглядит как ФИО (не одно короткое слово без других данных)
+        const nameParts = name.split(/\s+/).filter(p => p.length > 0);
+        if (nameParts.length === 1 && name.length < 5) {
+          // Если одно короткое слово, проверяем наличие других данных
+          const hasOtherData = [
+            colIndexes.dob || 2,
+            colIndexes.site || 4,
+            colIndexes.position || 5
+          ].some(idx => {
+            const val = String(row[idx] || '').trim();
+            return val && val !== '-' && val !== '—' && val.length > 0;
+          });
+          if (!hasOtherData) continue;
+        }
+        
+        // Если все проверки пройдены - добавляем строку
+        rows.push(row);
+      }
 
       const newEmployees: Employee[] = rows.map((row, index) => {
         const name = String(row[colIndexes.name || 1] || '').trim();
@@ -359,14 +568,17 @@ const ContingentSection: React.FC<ContingentSectionProps> = ({
           status: 'pending' as const,
         };
       }).filter(e => {
-        // Дополнительная фильтрация после создания объектов
+        // Дополнительная фильтрация после создания объектов - ОЧЕНЬ строгая
         if (!e.name || e.name.length < 3) return false;
         const nameLower = e.name.toLowerCase();
         const nameUpper = e.name.toUpperCase();
         const nameNormalized = nameLower.replace(/\s+/g, ' ').trim();
         
-        // Специальная проверка на "СПИСОК" - очень строгая
-        if (nameNormalized === 'список' || nameUpper === 'СПИСОК' || e.name === 'СПИСОК' || e.name === 'LIST') {
+        // СТРОГАЯ проверка на "СПИСОК" - в любом виде и регистре
+        if (nameNormalized === 'список' || nameUpper === 'СПИСОК' || e.name === 'СПИСОК' || 
+            nameNormalized === 'list' || nameUpper === 'LIST' || e.name === 'LIST' ||
+            nameNormalized.startsWith('список') || nameLower.startsWith('list') ||
+            nameNormalized.includes('список') || nameLower.includes('list')) {
           return false;
         }
         
@@ -374,7 +586,8 @@ const ContingentSection: React.FC<ContingentSectionProps> = ({
         const exactInvalidWords = [
           'список', 'контингент', 'руководителю', 'организации', 'клинике',
           'согласовано', 'санитарно-эпидемиологического', 'контроля',
-          'транспорте', 'куатовой', 'приложение', 'договору', 'работников'
+          'транспорте', 'куатовой', 'приложение', 'договору', 'работников',
+          'list', 'contingent', 'fio', 'name'
         ];
         
         // Проверка на точное совпадение
@@ -382,20 +595,46 @@ const ContingentSection: React.FC<ContingentSectionProps> = ({
           return false;
         }
         
-        // Проверка на включение
-        if (exactInvalidWords.some(pattern => nameLower.includes(pattern))) {
+        // Проверка на включение служебных слов - ОЧЕНЬ строгая
+        const invalidPatterns = [
+          'список', 'контингент', 'руководителю', 'организации', 'клинике',
+          'согласовано', 'приложение', 'договору', 'работников'
+        ];
+        if (invalidPatterns.some(pattern => nameLower.includes(pattern))) {
           return false;
         }
         
         // Если имя полностью заглавными буквами и одно слово - пропускаем
-        // Особенно строгая проверка для "СПИСОК"
         if (e.name === nameUpper && e.name.split(/\s+/).length === 1) {
           if (e.name === 'СПИСОК' || e.name === 'LIST') {
             return false;
           }
-          if (e.name.length > 3) {
+          // Если одно слово все заглавными длиннее 2 символов - пропускаем
+          if (e.name.length > 2) {
             return false;
           }
+        }
+        
+        // Проверяем, что имя содержит хотя бы одну букву
+        if (!/[а-яёa-z]/i.test(e.name)) {
+          return false;
+        }
+        
+        // Проверяем, что имя выглядит как реальное ФИО
+        // Если имя очень короткое (меньше 5 символов) и нет других данных - пропускаем
+        const hasOtherData = !!(e.dob && e.dob !== '-') || 
+                            !!(e.site && e.site !== '-') || 
+                            !!(e.position && e.position !== '-') ||
+                            !!(e.totalExperience && e.totalExperience !== '-') ||
+                            !!(e.positionExperience && e.positionExperience !== '-');
+        
+        if (e.name.length < 5 && !hasOtherData) {
+          return false;
+        }
+        
+        // Если имя начинается с одной буквы и точки (типа "A.") - пропускаем
+        if (/^[А-ЯA-Z]\./.test(e.name) && e.name.length <= 5) {
+          return false;
         }
         
         return true;
@@ -452,10 +691,18 @@ const ContingentSection: React.FC<ContingentSectionProps> = ({
     document.body.removeChild(link);
   }, []);
 
-  const handleClearEmployees = useCallback(async () => {
-    if (!window.confirm('Очистить весь контингент по этому договору?')) return;
-    await updateContract(contractId, { employees: [] });
-    showToast('success', 'Контингент очищен');
+  const handleClearEmployees = useCallback(() => {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Очистить контингент?',
+      message: 'Вы уверены, что хотите удалить всех сотрудников из контингента? Это действие нельзя отменить.',
+      variant: 'danger',
+      onConfirm: async () => {
+        await updateContract(contractId, { employees: [] });
+        showToast('success', 'Контингент очищен');
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+      }
+    });
   }, [contractId, updateContract, showToast]);
 
   // Вычисляем статистику
@@ -571,15 +818,57 @@ const ContingentSection: React.FC<ContingentSectionProps> = ({
         {/* Кнопки быстрого доступа */}
         <div className="p-6">
           {employees.length === 0 ? (
-            <EmptyContingentState
-              rawText={rawText}
-              setRawText={setRawText}
-              isProcessing={isProcessing}
-              fileError={fileError}
-              onProcessContingent={handleProcessContingent}
-              onUploadCsv={handleUploadCsv}
-              onDownloadTemplate={handleDownloadTemplate}
-            />
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Добавить сотрудника */}
+              <button
+                type="button"
+                onClick={onAddEmployee}
+                className="group relative p-6 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl shadow-lg hover:shadow-xl transition-all transform hover:scale-105 text-white overflow-hidden"
+              >
+                <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                <div className="relative z-10">
+                  <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center mb-3 backdrop-blur-sm">
+                    <PlusIcon className="w-6 h-6" />
+                  </div>
+                  <h4 className="font-bold text-lg mb-1">Добавить</h4>
+                  <p className="text-sm text-blue-100">Нового сотрудника</p>
+                </div>
+              </button>
+
+              {/* Загрузить из файла */}
+              <label className="group relative p-6 bg-gradient-to-br from-green-500 to-emerald-600 rounded-2xl shadow-lg hover:shadow-xl transition-all transform hover:scale-105 text-white overflow-hidden cursor-pointer">
+                <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                <div className="relative z-10">
+                  <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center mb-3 backdrop-blur-sm">
+                    <UploadIcon className="w-6 h-6" />
+                  </div>
+                  <h4 className="font-bold text-lg mb-1">Загрузить</h4>
+                  <p className="text-sm text-green-100">Из файла</p>
+                </div>
+                <input
+                  type="file"
+                  accept=".csv,.xls,.xlsx"
+                  onChange={handleUploadCsv}
+                  className="hidden"
+                />
+              </label>
+
+              {/* Скачать шаблон */}
+              <button
+                type="button"
+                onClick={handleDownloadTemplate}
+                className="group relative p-6 bg-gradient-to-br from-purple-500 to-pink-600 rounded-2xl shadow-lg hover:shadow-xl transition-all transform hover:scale-105 text-white overflow-hidden"
+              >
+                <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                <div className="relative z-10">
+                  <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center mb-3 backdrop-blur-sm">
+                    <FileTextIcon className="w-6 h-6" />
+                  </div>
+                  <h4 className="font-bold text-lg mb-1">Скачать</h4>
+                  <p className="text-sm text-purple-100">Шаблон (CSV)</p>
+                </div>
+              </button>
+            </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               {/* Добавить сотрудника */}
@@ -615,17 +904,7 @@ const ContingentSection: React.FC<ContingentSectionProps> = ({
               </button>
 
               {/* Загрузить из файла */}
-              <button
-                type="button"
-                onClick={() => {
-                  setIsContingentModalOpen(true);
-                  setTimeout(() => {
-                    const uploadBtn = document.querySelector('[data-upload-trigger]') as HTMLElement;
-                    uploadBtn?.click();
-                  }, 100);
-                }}
-                className="group relative p-6 bg-gradient-to-br from-green-500 to-emerald-600 rounded-2xl shadow-lg hover:shadow-xl transition-all transform hover:scale-105 text-white overflow-hidden"
-              >
+              <label className="group relative p-6 bg-gradient-to-br from-green-500 to-emerald-600 rounded-2xl shadow-lg hover:shadow-xl transition-all transform hover:scale-105 text-white overflow-hidden cursor-pointer">
                 <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
                 <div className="relative z-10">
                   <div className="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center mb-3 backdrop-blur-sm">
@@ -634,7 +913,13 @@ const ContingentSection: React.FC<ContingentSectionProps> = ({
                   <h4 className="font-bold text-lg mb-1">Загрузить</h4>
                   <p className="text-sm text-green-100">Из файла</p>
                 </div>
-              </button>
+                <input
+                  type="file"
+                  accept=".csv,.xls,.xlsx"
+                  onChange={handleUploadCsv}
+                  className="hidden"
+                />
+              </label>
 
               {/* Очистить */}
               <button
@@ -680,6 +965,18 @@ const ContingentSection: React.FC<ContingentSectionProps> = ({
           onDownloadTemplate={handleDownloadTemplate}
         />
       )}
+
+      {/* Диалог подтверждения */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        variant={confirmDialog.variant}
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+        confirmText="Очистить"
+        cancelText="Отмена"
+      />
     </>
   );
 };
@@ -837,7 +1134,7 @@ const ContingentModal: React.FC<ContingentModalProps> = ({
         </div>
 
         {/* Поиск */}
-        <div className="p-4 border-b border-slate-200 bg-white">
+        <div className="px-4 py-3 border-b border-slate-200 bg-white">
           <input
             type="text"
             value={searchQuery}
@@ -891,7 +1188,7 @@ const ContingentModal: React.FC<ContingentModalProps> = ({
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto overflow-x-hidden p-4">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden">
           <table className="w-full text-[11px] text-left border-collapse table-fixed">
             <colgroup>
               <col className="w-12" />
@@ -908,21 +1205,21 @@ const ContingentModal: React.FC<ContingentModalProps> = ({
               <col className="w-20" />
               <col className="w-28" />
             </colgroup>
-            <thead className="bg-slate-50 text-slate-500 uppercase sticky top-0 z-20 shadow-sm">
+            <thead className="bg-slate-700 text-white uppercase sticky top-0 z-20 shadow-sm">
               <tr>
-                <th className="px-2 py-2 text-left bg-slate-50 border-b border-slate-200 font-semibold">№</th>
-                <th className="px-2 py-2 text-left bg-slate-50 border-b border-slate-200 font-semibold">ФИО</th>
-                <th className="px-2 py-2 text-left bg-slate-50 border-b border-slate-200 font-semibold">Дата рожд.</th>
-                <th className="px-1 py-2 text-left bg-slate-50 border-b border-slate-200 font-semibold">Пол</th>
-                <th className="px-2 py-2 text-left bg-slate-50 border-b border-slate-200 font-semibold">Участок</th>
-                <th className="px-2 py-2 text-left bg-slate-50 border-b border-slate-200 font-semibold">Должность</th>
-                <th className="px-2 py-2 text-left bg-slate-50 border-b border-slate-200 font-semibold">Общ. стаж</th>
-                <th className="px-2 py-2 text-left bg-slate-50 border-b border-slate-200 font-semibold">Стаж по должн.</th>
-                <th className="px-2 py-2 text-left bg-slate-50 border-b border-slate-200 font-semibold">Дата МО</th>
-                <th className="px-2 py-2 text-left bg-slate-50 border-b border-slate-200 font-semibold">Вредность</th>
-                <th className="px-2 py-2 text-left bg-slate-50 border-b border-slate-200 font-semibold">Примечание</th>
-                <th className="px-2 py-2 text-left bg-slate-50 border-b border-slate-200 font-semibold">Статус</th>
-                <th className="px-2 py-2 text-left bg-slate-50 border-b border-slate-200 font-semibold">Действия</th>
+                <th className="px-2 py-2 text-left bg-slate-700 border-b border-slate-600 font-semibold text-white">№</th>
+                <th className="px-2 py-2 text-left bg-slate-700 border-b border-slate-600 font-semibold text-white">ФИО</th>
+                <th className="px-2 py-2 text-left bg-slate-700 border-b border-slate-600 font-semibold text-white">Дата рожд.</th>
+                <th className="px-1 py-2 text-left bg-slate-700 border-b border-slate-600 font-semibold text-white">Пол</th>
+                <th className="px-2 py-2 text-left bg-slate-700 border-b border-slate-600 font-semibold text-white">Участок</th>
+                <th className="px-2 py-2 text-left bg-slate-700 border-b border-slate-600 font-semibold text-white">Должность</th>
+                <th className="px-2 py-2 text-left bg-slate-700 border-b border-slate-600 font-semibold text-white">Общ. стаж</th>
+                <th className="px-2 py-2 text-left bg-slate-700 border-b border-slate-600 font-semibold text-white">Стаж по должн.</th>
+                <th className="px-2 py-2 text-left bg-slate-700 border-b border-slate-600 font-semibold text-white">Дата МО</th>
+                <th className="px-2 py-2 text-left bg-slate-700 border-b border-slate-600 font-semibold text-white">Вредность</th>
+                <th className="px-2 py-2 text-left bg-slate-700 border-b border-slate-600 font-semibold text-white">Примечание</th>
+                <th className="px-2 py-2 text-left bg-slate-700 border-b border-slate-600 font-semibold text-white">Статус</th>
+                <th className="px-2 py-2 text-left bg-slate-700 border-b border-slate-600 font-semibold text-white">Действия</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-slate-100">
@@ -1001,6 +1298,6 @@ const EmployeesTable: React.FC<EmployeesTableProps> = ({
       </tbody>
     </table>
   </div>
-);
-
-export default ContingentSection;
+  );
+  
+  export default ContingentSection;

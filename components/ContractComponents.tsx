@@ -233,48 +233,137 @@ export const SigningControls: React.FC<SigningControlsProps> = ({
   otpError,
   onRequestOtp,
   onConfirmOtp
-}) => (
-  <div className="flex flex-col items-end gap-2">
-    <div className="flex gap-2">
-      <button
-        onClick={onRequestOtp}
-        disabled={isRequestingOtp || !currentUser?.phone}
-        className="bg-slate-900 text-white px-4 py-2 rounded-lg font-bold text-xs hover:bg-black disabled:opacity-50 transition-all shadow-lg shadow-slate-900/20 flex items-center gap-2"
-      >
-        {isRequestingOtp ? (
-          <LoaderIcon className="w-4 h-4 animate-spin" />
-        ) : (
-          <PenIcon className="w-4 h-4" />
-        )}
-        Отправить код
-      </button>
-      <input
-        type="text"
-        value={otpValue}
-        onChange={(e) => setOtpValue(e.target.value.replace(/\D/g, '').slice(0, 4))}
-        placeholder="OTP"
-        className="w-20 px-2 py-2 border border-slate-200 rounded-lg text-xs text-center"
-      />
-      <button
-        onClick={onConfirmOtp}
-        disabled={isConfirmingOtp || otpValue.length === 0}
-        className="px-4 py-2 border border-slate-300 rounded-lg text-xs font-bold hover:bg-slate-100 disabled:opacity-50 transition-colors"
-      >
-        {isConfirmingOtp ? '...' : 'Подтвердить'}
-      </button>
+}) => {
+  const step = !otpSent ? 1 : otpValue.length === 4 ? 3 : 2;
+
+  return (
+    <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl p-6 border-2 border-blue-200 shadow-lg">
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-12 h-12 bg-blue-600 rounded-xl flex items-center justify-center shadow-md">
+          <FileSignatureIcon className="w-6 h-6 text-white" />
+        </div>
+        <div>
+          <h3 className="font-bold text-lg text-slate-900">Подписание договора</h3>
+          <p className="text-xs text-slate-600">Подтвердите подписание через OTP код</p>
+        </div>
+      </div>
+
+      {/* Progress Steps */}
+      <div className="flex items-center gap-2 mb-6">
+        <div className={`flex-1 h-1 rounded-full ${step >= 1 ? 'bg-blue-600' : 'bg-slate-200'}`} />
+        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
+          step >= 1 ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-400'
+        }`}>
+          {step > 1 ? '✓' : '1'}
+        </div>
+        <div className={`flex-1 h-1 rounded-full ${step >= 2 ? 'bg-blue-600' : 'bg-slate-200'}`} />
+        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
+          step >= 2 ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-400'
+        }`}>
+          {step > 2 ? '✓' : '2'}
+        </div>
+        <div className={`flex-1 h-1 rounded-full ${step >= 3 ? 'bg-blue-600' : 'bg-slate-200'}`} />
+        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
+          step >= 3 ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-400'
+        }`}>
+          3
+        </div>
+      </div>
+
+      {/* Step 1: Request OTP */}
+      {!otpSent && (
+        <div className="space-y-4">
+          <div className="bg-white rounded-xl p-4 border border-blue-100">
+            <p className="text-sm text-slate-700 mb-2">
+              Код подтверждения будет отправлен на ваш номер телефона:
+            </p>
+            <p className="font-mono font-semibold text-slate-900">{currentUser?.phone || 'Не указан'}</p>
+          </div>
+          <button
+            onClick={onRequestOtp}
+            disabled={isRequestingOtp || !currentUser?.phone}
+            className="w-full bg-blue-600 text-white px-6 py-3.5 rounded-xl font-bold text-sm hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2"
+          >
+            {isRequestingOtp ? (
+              <>
+                <LoaderIcon className="w-5 h-5 animate-spin" />
+                Отправка кода...
+              </>
+            ) : (
+              <>
+                <PenIcon className="w-5 h-5" />
+                Получить код подтверждения
+              </>
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* Step 2: Enter OTP */}
+      {otpSent && (
+        <div className="space-y-4">
+          <div className="bg-green-50 border border-green-200 rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <CheckShieldIcon className="w-5 h-5 text-green-600" />
+              <p className="text-sm font-semibold text-green-800">Код отправлен!</p>
+            </div>
+            <p className="text-xs text-green-700">
+              Проверьте WhatsApp на номер {currentUser?.phone}
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">
+              Введите 4-значный код:
+            </label>
+            <div className="flex gap-3">
+              <input
+                type="text"
+                value={otpValue}
+                onChange={(e) => setOtpValue(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                placeholder="0000"
+                className="flex-1 px-4 py-3.5 border-2 border-slate-300 rounded-xl text-center text-2xl font-mono font-bold tracking-widest focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                maxLength={4}
+                autoFocus
+              />
+              <button
+                onClick={onConfirmOtp}
+                disabled={isConfirmingOtp || otpValue.length !== 4}
+                className="px-6 py-3.5 bg-slate-900 text-white rounded-xl font-bold text-sm hover:bg-black disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg flex items-center gap-2"
+              >
+                {isConfirmingOtp ? (
+                  <>
+                    <LoaderIcon className="w-4 h-4 animate-spin" />
+                    Проверка...
+                  </>
+                ) : (
+                  <>
+                    <CheckShieldIcon className="w-4 h-4" />
+                    Подписать
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {otpError && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+              <p className="text-sm text-red-700 font-medium">{otpError}</p>
+            </div>
+          )}
+
+          <button
+            onClick={onRequestOtp}
+            disabled={isRequestingOtp}
+            className="w-full text-sm text-slate-600 hover:text-slate-900 underline disabled:opacity-50"
+          >
+            Отправить код повторно
+          </button>
+        </div>
+      )}
     </div>
-    {otpSent && !otpError && (
-      <span className="text-[10px] text-slate-400">
-        Код отправлен на номер {currentUser?.phone}
-      </span>
-    )}
-    {otpError && (
-      <span className="text-[10px] text-red-500">
-        {otpError}
-      </span>
-    )}
-  </div>
-);
+  );
+};
 
 // --- COMMERCIAL TERMS CARD ---
 interface CommercialTermsCardProps {
@@ -364,13 +453,25 @@ export const CalendarPlanSection: React.FC<CalendarPlanSectionProps> = ({
         }
       ];
 
+      // Проверяем, есть ли уже эти документы, чтобы не дублировать
+      const hasRouteSheet = existingDocs.some(d => d.type === 'route_sheet');
+      const hasOrder = existingDocs.some(d => d.type === 'order');
+      
+      const docsToAdd: ContractDocument[] = [];
+      if (!hasRouteSheet) {
+        docsToAdd.push(newDocs[0]);
+      }
+      if (!hasOrder) {
+        docsToAdd.push(newDocs[1]);
+      }
+
       await updateContract(contract.id, {
         calendarPlan: {
           ...contract.calendarPlan,
           status: 'approved',
           rejectReason: null,
         },
-        documents: [...existingDocs, ...newDocs],
+        documents: docsToAdd.length > 0 ? [...existingDocs, ...docsToAdd] : existingDocs,
         doctors: contractDoctors, // Сохраняем врачей в договоре
       });
 

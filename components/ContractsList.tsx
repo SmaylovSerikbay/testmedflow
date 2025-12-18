@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Contract, UserProfile } from '../types';
 import { sendWhatsAppMessage } from '../services/greenApi';
-import { rtdb, ref, push, set, get } from '../services/firebase';
+import { apiCreateContract, apiGetUserByPhone, apiGetUserByBin, ApiContract } from '../services/api';
 import { 
   LoaderIcon, CheckShieldIcon, PlusIcon, BriefcaseIcon, ChevronLeftIcon, SearchIcon, FilterIcon, XIcon, UsersIcon, CalendarIcon
 } from './Icons';
@@ -12,13 +12,15 @@ interface ContractsListProps {
   contracts: Contract[];
   onContractSelect: (id: string) => void;
   showToast: (type: 'success' | 'error' | 'info', message: string, duration?: number) => void;
+  refetchContracts?: () => void;
 }
 
 const ContractsList: React.FC<ContractsListProps> = ({ 
   currentUser, 
   contracts, 
   onContractSelect, 
-  showToast 
+  showToast,
+  refetchContracts
 }) => {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -195,13 +197,14 @@ const ContractsList: React.FC<ContractsListProps> = ({
         )}
       </div>
 
-      {isCreateModalOpen && (
-        <CreateContractModal
-          currentUser={currentUser}
-          onClose={() => setIsCreateModalOpen(false)}
-          showToast={showToast}
-        />
-      )}
+        {isCreateModalOpen && (
+          <CreateContractModal
+            currentUser={currentUser}
+            onClose={() => setIsCreateModalOpen(false)}
+            showToast={showToast}
+            refetchContracts={refetchContracts}
+          />
+        )}
     </main>
   );
 };
@@ -290,15 +293,16 @@ const ContractsGrid: React.FC<ContractsGridProps> = ({ contracts, currentUser, o
                         <h3 className="text-lg font-bold group-hover:text-blue-600 transition-colors truncate mb-1">
                 {currentUser?.role === 'organization' ? contract.clinicName : contract.clientName}
               </h3>
-                        <p className="text-sm text-slate-500 font-mono">№{contract.number}</p>
+                        <p className="text-sm text-slate-500 font-mono">ID: {contract.number}</p>
             </div>
                       <StatusBadge status={contract.status} />
           </div>
           
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-slate-600 mt-3">
                       <div className="flex items-center gap-1.5">
-                        <span className="font-semibold text-slate-900">{contract.price?.toLocaleString()}</span>
-                        <span className="text-slate-500">₸</span>
+                        <span className="font-semibold text-slate-900">
+                          {contract.price ? contract.price.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ') : '0'} Т
+                        </span>
                       </div>
                       {contract.plannedHeadcount && (
                         <div className="flex items-center gap-1.5">
@@ -336,9 +340,10 @@ interface CreateContractModalProps {
   currentUser: UserProfile | null;
   onClose: () => void;
   showToast: (type: 'success' | 'error' | 'info', message: string, duration?: number) => void;
+  refetchContracts?: () => void;
 }
 
-const CreateContractModal: React.FC<CreateContractModalProps> = ({ currentUser, onClose, showToast }) => {
+const CreateContractModal: React.FC<CreateContractModalProps> = ({ currentUser, onClose, showToast, refetchContracts }) => {
   const [step, setStep] = useState(1);
   const [searchBin, setSearchBin] = useState('');
   const [foundCounterparty, setFoundCounterparty] = useState<{name: string, bin: string, phone?: string} | null>(null);
@@ -351,34 +356,40 @@ const CreateContractModal: React.FC<CreateContractModalProps> = ({ currentUser, 
   });
   const [isSearching, setIsSearching] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const handleSearchBin = useCallback(async () => {
-    if (searchBin.length !== 12) return;
+    if (searchBin.length !== 12) {
+      setFoundCounterparty(null);
+      return;
+    }
+    
     setIsSearching(true);
     setFoundCounterparty(null);
     
     try {
-      const usersRef = ref(rtdb, 'users');
-      const snapshot = await get(usersRef);
+      // Проверяем, что это не наш собственный BIN
+      if (currentUser?.bin && searchBin.trim() === currentUser.bin.trim()) {
+        showToast('error', 'Нельзя создать договор с самим собой');
+        setIsSearching(false);
+        return;
+      }
+
+      // Ищем пользователя по BIN
+      const foundUser = await apiGetUserByBin(searchBin);
       
-      if (snapshot.exists()) {
-        const users = snapshot.val();
-        const foundUser = Object.values(users as Record<string, UserProfile>).find(
-          (user: any) => user.bin && user.bin.toString().trim() === searchBin.trim()
-        ) as UserProfile | undefined;
-        
-        if (foundUser) {
-          if (foundUser.role === currentUser?.role) {
-            showToast('error', 'Вы не можете заключить договор с организацией того же типа.');
-          } else {
-            setFoundCounterparty({
-              name: foundUser.companyName,
-              bin: foundUser.bin,
-              phone: foundUser.phone
-            });
-          }
-        } else {
+      if (foundUser) {
+        // Проверяем, что роль соответствует ожидаемой
+        const expectedRole = currentUser?.role === 'organization' ? 'clinic' : 'organization';
+        if (foundUser.role !== expectedRole) {
+          showToast('error', `Найден пользователь с ролью "${foundUser.role}", ожидается "${expectedRole}"`);
           setFoundCounterparty(null);
+        } else {
+          setFoundCounterparty({
+            name: foundUser.companyName || 'Не указано',
+            bin: foundUser.bin || searchBin,
+            phone: foundUser.phone
+          });
         }
       } else {
         setFoundCounterparty(null);
@@ -390,7 +401,31 @@ const CreateContractModal: React.FC<CreateContractModalProps> = ({ currentUser, 
     } finally {
       setIsSearching(false);
     }
-  }, [searchBin, currentUser?.role, showToast]);
+  }, [searchBin, currentUser, showToast]);
+
+  // Автоматический поиск при вводе 12 цифр
+  useEffect(() => {
+    // Очищаем предыдущий таймер
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+
+    // Если введено 12 цифр, запускаем поиск с задержкой
+    if (searchBin.length === 12) {
+      searchTimeoutRef.current = setTimeout(() => {
+        handleSearchBin();
+      }, 500); // Задержка 500мс для debounce
+    } else {
+      // Если меньше 12 цифр, очищаем результат
+      setFoundCounterparty(null);
+    }
+
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, [searchBin, handleSearchBin]);
 
   const handleCreateContract = useCallback(async () => {
     if (!currentUser) return;
@@ -408,8 +443,13 @@ const CreateContractModal: React.FC<CreateContractModalProps> = ({ currentUser, 
     const myBin = currentUser.bin.trim();
     const targetBin = searchBin.trim();
 
+    // Генерируем номер договора сразу при создании
+    const year = new Date().getFullYear();
+    const randomId = Math.floor(1000 + Math.random() * 9000);
+    const contractNumber = `D-${year}/${randomId}`;
+    
     const newContract: Omit<Contract, 'id'> = {
-      number: 'DRAFT',
+      number: contractNumber,
       date: contractTerms.contractDate,
       status: 'request',
       
@@ -429,9 +469,17 @@ const CreateContractModal: React.FC<CreateContractModalProps> = ({ currentUser, 
     };
 
     try {
-      const contractsRef = ref(rtdb, 'contracts');
-      const newContractRef = push(contractsRef);
-      await set(newContractRef, newContract);
+      const created = await apiCreateContract({
+        number: newContract.number,
+        clientName: newContract.clientName,
+        clientBin: newContract.clientBin,
+        clinicName: newContract.clinicName,
+        clinicBin: newContract.clinicBin,
+        date: newContract.date,
+        status: newContract.status as any,
+        price: newContract.price,
+        plannedHeadcount: newContract.plannedHeadcount,
+      });
       
       if (isInviteNeeded && invitePhone) {
         sendWhatsAppMessage(invitePhone, 
@@ -440,6 +488,12 @@ const CreateContractModal: React.FC<CreateContractModalProps> = ({ currentUser, 
       }
       
       onClose();
+      // Обновляем список договоров после успешного создания с небольшой задержкой
+      if (refetchContracts) {
+        setTimeout(() => {
+          refetchContracts();
+        }, 500);
+      }
       showToast('success', 'Договор создан и отправлен контрагенту.');
     } catch (e) {
       console.error("Error creating contract", e);
@@ -447,7 +501,7 @@ const CreateContractModal: React.FC<CreateContractModalProps> = ({ currentUser, 
     } finally {
       setIsCreating(false);
     }
-  }, [currentUser, contractTerms, foundCounterparty, searchBin, invitePhone, onClose, showToast]);
+  }, [currentUser, contractTerms, foundCounterparty, searchBin, invitePhone, onClose, showToast, refetchContracts]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -464,7 +518,6 @@ const CreateContractModal: React.FC<CreateContractModalProps> = ({ currentUser, 
               invitePhone={invitePhone}
               setInvitePhone={setInvitePhone}
               isSearching={isSearching}
-              onSearch={handleSearchBin}
               onNext={() => setStep(2)}
               currentUser={currentUser}
             />

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AmbulatoryCard, Employee, Contract } from '../types';
-import { rtdb, ref, set } from '../services/firebase';
+import { apiGetAmbulatoryCard, apiUpdateAmbulatoryCard, apiUpdateContract } from '../services/api';
 import { CheckShieldIcon, XIcon, LoaderIcon } from './Icons';
 
 interface FinalConclusionModalProps {
@@ -61,20 +61,29 @@ const FinalConclusionModal: React.FC<FinalConclusionModalProps> = ({
         updatedAt: new Date().toISOString(),
       };
 
-      const cardRef = ref(rtdb, `ambulatoryCards/${employee.id}_${contract.id}`);
-      await set(cardRef, updatedCard);
+      const contractIdNum = parseInt(contract.id, 10);
+      if (!isNaN(contractIdNum)) {
+        // Загружаем текущую карту для получения ID
+        const currentCard = await apiGetAmbulatoryCard(employee.id, contractIdNum);
+        if (currentCard) {
+          await apiUpdateAmbulatoryCard(currentCard.id, {
+            finalConclusion: updatedCard.finalConclusion,
+          });
+        }
 
-      // Обновляем статус сотрудника в договоре
-      const employeeIndex = contract.employees.findIndex(e => e.id === employee.id);
-      if (employeeIndex !== -1) {
-        const updatedEmployees = [...contract.employees];
-        updatedEmployees[employeeIndex] = {
-          ...updatedEmployees[employeeIndex],
-          status: form.status,
-        };
+        // Обновляем статус сотрудника в договоре
+        const employeeIndex = contract.employees.findIndex(e => e.id === employee.id);
+        if (employeeIndex !== -1) {
+          const updatedEmployees = [...contract.employees];
+          updatedEmployees[employeeIndex] = {
+            ...updatedEmployees[employeeIndex],
+            status: form.status,
+          };
 
-        const contractRef = ref(rtdb, `contracts/${contract.id}/employees`);
-        await set(contractRef, updatedEmployees);
+          await apiUpdateContract(contractIdNum, {
+            employees: updatedEmployees,
+          });
+        }
       }
 
       onSaved();
@@ -88,7 +97,7 @@ const FinalConclusionModal: React.FC<FinalConclusionModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
       <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
         <div className="sticky top-0 bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between">
           <h2 className="text-xl font-bold text-slate-900">Финальное заключение комиссии</h2>

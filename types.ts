@@ -7,6 +7,7 @@ export interface UserProfile {
   companyName?: string;
   leaderName?: string;
   phone: string;
+  createdAt?: string;
   // Для врачей
   doctorId?: string; // ID врача в клинике
   clinicId?: string; // ID клиники, к которой привязан врач
@@ -142,6 +143,7 @@ export interface DoctorExamination {
 
 // Маршрутный лист для врача
 export interface DoctorRouteSheet {
+  id?: string; // ID из базы данных (для Go API)
   doctorId: string;
   contractId: string;
   specialty?: string; // Специализация (для виртуальных врачей)

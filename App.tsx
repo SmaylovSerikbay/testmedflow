@@ -4,29 +4,84 @@ import AuthModal from './components/AuthModal';
 import Dashboard from './components/Dashboard';
 import DoctorDashboard from './components/DoctorDashboard';
 import EmployeeDashboard from './components/EmployeeDashboard';
+import Form052Editor from './components/Form052Editor';
 import { AppState, UserProfile } from './types';
-import { rtdb, ref, get } from './services/firebase';
+import { apiGetUserByPhone, apiCreateUser } from './services/api';
 
 const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>(AppState.LANDING);
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [isCheckingUser, setIsCheckingUser] = useState(true);
+  
+  // Проверяем URL для формы 052
+  useEffect(() => {
+    const path = window.location.pathname;
+    if (path === '/form052' || path.startsWith('/form052/')) {
+      // Не проверяем пользователя для формы 052 - она доступна отдельно
+      setIsCheckingUser(false);
+    }
+  }, []);
 
   // Проверяем существование пользователя при загрузке
   useEffect(() => {
+    // Пропускаем проверку для формы 052
+    if (window.location.pathname === '/form052' || window.location.pathname.startsWith('/form052/')) {
+      return;
+    }
+    
     const checkUser = async () => {
-      const uid = localStorage.getItem('medflow_uid');
-      if (!uid) {
+      const phone = localStorage.getItem('medflow_phone');
+      if (!phone) {
         setIsCheckingUser(false);
         return;
       }
 
       try {
-        // Проверка существования пользователя в Realtime Database
-        const userRef = ref(rtdb, `users/${uid}`);
-        const snapshot = await get(userRef);
-        if (snapshot.exists()) {
-          const userData = { uid, ...snapshot.val() } as UserProfile;
+        // Проверка существования пользователя через Go API
+        const apiUser = await apiGetUserByPhone(phone);
+        if (apiUser) {
+          // Для врачей: если нет clinicBin, но есть bin, используем его
+          const clinicBin = apiUser.clinicBin || (apiUser.role === 'doctor' ? apiUser.bin : undefined);
+          
+          const userData: UserProfile = {
+            uid: apiUser.uid,
+            role: apiUser.role,
+            bin: apiUser.bin,
+            companyName: apiUser.companyName,
+            leaderName: apiUser.leaderName,
+            phone: apiUser.phone,
+            createdAt: apiUser.createdAt || new Date().toISOString(),
+            // Загружаем дополнительные поля для врачей
+            doctorId: apiUser.doctorId,
+            clinicId: apiUser.clinicId,
+            specialty: apiUser.specialty,
+            clinicBin: clinicBin,
+            // Для сотрудников
+            employeeId: apiUser.employeeId,
+            contractId: apiUser.contractId,
+          };
+          
+          // Если у врача нет clinicBin, но есть bin, обновляем пользователя в базе
+          if (apiUser.role === 'doctor' && !apiUser.clinicBin && apiUser.bin) {
+            try {
+              await apiCreateUser({
+                uid: apiUser.uid,
+                role: apiUser.role,
+                phone: apiUser.phone,
+                bin: apiUser.bin,
+                companyName: apiUser.companyName,
+                leaderName: apiUser.leaderName,
+                doctorId: apiUser.doctorId,
+                clinicId: apiUser.clinicId,
+                specialty: apiUser.specialty,
+                clinicBin: apiUser.bin, // Используем bin как clinicBin
+                createdAt: apiUser.createdAt,
+              } as any);
+            } catch (error) {
+              console.error('Error updating doctor clinicBin:', error);
+            }
+          }
+          
           setCurrentUser(userData);
           
           // Определяем состояние приложения в зависимости от роли
@@ -38,12 +93,16 @@ const App: React.FC = () => {
             setAppState(AppState.DASHBOARD);
           }
         } else {
-          // Пользователь не найден - очищаем localStorage
+          // Пользователь не найден - очищаем localStorage и показываем форму авторизации
+          console.warn('User not found in database, phone:', phone);
           localStorage.removeItem('medflow_uid');
           localStorage.removeItem('medflow_phone');
+          setAppState(AppState.AUTH);
         }
       } catch (error: any) {
-        console.error("Error checking user:", error);
+        if (import.meta.env.DEV) {
+          console.error("Error checking user:", error);
+        }
         // При любой ошибке просто показываем landing page
       } finally {
         setIsCheckingUser(false);
@@ -65,27 +124,108 @@ const App: React.FC = () => {
     );
   }
 
-  const handleAuthSuccess = () => {
-    // После успешной авторизации проверяем роль пользователя
-    const uid = localStorage.getItem('medflow_uid');
-    if (uid) {
-      const userRef = ref(rtdb, `users/${uid}`);
-      get(userRef).then((snapshot) => {
-        if (snapshot.exists()) {
-          const userData = { uid, ...snapshot.val() } as UserProfile;
-          setCurrentUser(userData);
-          
-          if (userData.role === 'doctor') {
-            setAppState(AppState.DOCTOR_DASHBOARD);
-          } else if (userData.role === 'employee') {
-            setAppState(AppState.EMPLOYEE_DASHBOARD);
-          } else {
-            setAppState(AppState.DASHBOARD);
-          }
+  const handleAuthSuccess = async () => {
+    // После успешной авторизации проверяем роль пользователя через Go API
+    const phone = localStorage.getItem('medflow_phone');
+    if (!phone) {
+      console.error('No phone in localStorage after auth success');
+      return;
+    }
+    
+    try {
+      const apiUser = await apiGetUserByPhone(phone);
+      if (!apiUser) {
+        console.error('User not found after auth success, phone:', phone);
+        // Очищаем localStorage и показываем форму регистрации
+        localStorage.removeItem('medflow_uid');
+        localStorage.removeItem('medflow_phone');
+        setAppState(AppState.AUTH);
+        return;
+      }
+      
+      // Для врачей: если нет clinicBin, но есть bin, используем его
+      const clinicBin = apiUser.clinicBin || (apiUser.role === 'doctor' ? apiUser.bin : undefined);
+      
+      const userData: UserProfile = {
+        uid: apiUser.uid,
+        role: apiUser.role,
+        bin: apiUser.bin,
+        companyName: apiUser.companyName,
+        leaderName: apiUser.leaderName,
+        phone: apiUser.phone,
+        createdAt: apiUser.createdAt || new Date().toISOString(),
+        // Загружаем дополнительные поля для врачей
+        doctorId: apiUser.doctorId,
+        clinicId: apiUser.clinicId,
+        specialty: apiUser.specialty,
+        clinicBin: clinicBin,
+        // Для сотрудников
+        employeeId: apiUser.employeeId,
+        contractId: apiUser.contractId,
+      };
+      
+      // Если у врача нет clinicBin, но есть bin, обновляем пользователя в базе
+      if (apiUser.role === 'doctor' && !apiUser.clinicBin && apiUser.bin) {
+        try {
+          await apiCreateUser({
+            uid: apiUser.uid,
+            role: apiUser.role,
+            phone: apiUser.phone,
+            bin: apiUser.bin,
+            companyName: apiUser.companyName,
+            leaderName: apiUser.leaderName,
+            doctorId: apiUser.doctorId,
+            clinicId: apiUser.clinicId,
+            specialty: apiUser.specialty,
+            clinicBin: apiUser.bin, // Используем bin как clinicBin
+            createdAt: apiUser.createdAt,
+          } as any);
+        } catch (error) {
+          console.error('Error updating doctor clinicBin:', error);
         }
-      });
+      }
+      
+      setCurrentUser(userData);
+      
+      // Определяем состояние приложения в зависимости от роли
+      if (userData.role === 'doctor') {
+        setAppState(AppState.DOCTOR_DASHBOARD);
+      } else if (userData.role === 'employee') {
+        setAppState(AppState.EMPLOYEE_DASHBOARD);
+      } else {
+        setAppState(AppState.DASHBOARD);
+      }
+    } catch (error: any) {
+      console.error("Error loading user after auth:", error);
+      // При ошибке очищаем localStorage и показываем форму авторизации
+      localStorage.removeItem('medflow_uid');
+      localStorage.removeItem('medflow_phone');
+      setAppState(AppState.AUTH);
     }
   };
+
+  // Если открыта форма 052, показываем её отдельно
+  const path = window.location.pathname;
+  if (path === '/form052' || path.startsWith('/form052/')) {
+    // Загружаем данные из localStorage или URL параметров
+    const savedData = localStorage.getItem('form052_data');
+    const initialData = savedData ? JSON.parse(savedData) : undefined;
+    
+    return (
+      <Form052Editor
+        initialData={initialData}
+        mode="edit"
+        onSave={(data) => {
+          localStorage.setItem('form052_data', JSON.stringify(data));
+          console.log('Данные формы 052 сохранены');
+        }}
+        onPrint={(data) => {
+          console.log('Печать формы 052', data);
+          window.print();
+        }}
+      />
+    );
+  }
 
   return (
     // Conditional styling:

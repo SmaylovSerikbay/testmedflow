@@ -4,7 +4,7 @@ import { FACTOR_RULES, FactorRule, CATEGORY_LABELS } from '../factorRules';
 import * as XLSX from 'xlsx';
 import { parseEmployeeData } from '../services/geminiService';
 import { sendWhatsAppMessage, generateOTP } from '../services/greenApi';
-import { rtdb, ref, onValue, push, remove, update, set, get, query, orderByChild, equalTo } from '../services/firebase';
+import { apiListContractsByBin, apiUpdateContract, apiListDoctors, apiGetUserByPhone, apiCreateUser, ApiContract, ApiDoctor } from '../services/api';
 import { 
   UploadIcon, LoaderIcon, SparklesIcon, LogoIcon, 
   FileTextIcon, CalendarIcon, UsersIcon, CheckShieldIcon,
@@ -139,29 +139,76 @@ const useUserProfile = () => {
 
   useEffect(() => {
     const fetchProfile = async () => {
-        const uid = localStorage.getItem('medflow_uid');
-        if (!uid) {
+        const phone = localStorage.getItem('medflow_phone');
+        if (!phone) {
             setIsLoadingProfile(false);
-            window.location.reload();
+            // Очищаем состояние и перенаправляем на главную
+            localStorage.removeItem('medflow_uid');
+            localStorage.removeItem('medflow_phone');
+            window.location.href = '/';
             return;
         }
         
         try {
-            const userRef = ref(rtdb, `users/${uid}`);
-            const snapshot = await get(userRef);
+            const apiUser = await apiGetUserByPhone(phone);
             
-            if (snapshot.exists()) {
-                const userData = snapshot.val() as UserProfile;
+            if (apiUser) {
+                // Для врачей: если нет clinicBin, но есть bin, используем его
+                const clinicBin = apiUser.clinicBin || (apiUser.role === 'doctor' ? apiUser.bin : undefined);
+                
+                const userData: UserProfile = {
+                    uid: apiUser.uid,
+                    role: apiUser.role,
+                    bin: apiUser.bin,
+                    companyName: apiUser.companyName,
+                    leaderName: apiUser.leaderName,
+                    phone: apiUser.phone,
+                    createdAt: apiUser.createdAt || new Date().toISOString(),
+                    // Загружаем дополнительные поля для врачей
+                    doctorId: apiUser.doctorId,
+                    clinicId: apiUser.clinicId,
+                    specialty: apiUser.specialty,
+                    clinicBin: clinicBin,
+                    // Для сотрудников
+                    employeeId: apiUser.employeeId,
+                    contractId: apiUser.contractId,
+                };
+                
+                // Если у врача нет clinicBin, но есть bin, обновляем пользователя в базе
+                if (apiUser.role === 'doctor' && !apiUser.clinicBin && apiUser.bin) {
+                    try {
+                        await apiCreateUser({
+                            uid: apiUser.uid,
+                            role: apiUser.role,
+                            phone: apiUser.phone,
+                            bin: apiUser.bin,
+                            companyName: apiUser.companyName,
+                            leaderName: apiUser.leaderName,
+                            doctorId: apiUser.doctorId,
+                            clinicId: apiUser.clinicId,
+                            specialty: apiUser.specialty,
+                            clinicBin: apiUser.bin, // Используем bin как clinicBin
+                            createdAt: apiUser.createdAt,
+                        } as any);
+                    } catch (error) {
+                        console.error('Error updating doctor clinicBin:', error);
+                    }
+                }
+                
                 setCurrentUser(userData);
             } else {
-                console.warn("User profile not found for UID:", uid);
+                if (import.meta.env.DEV) {
+                    console.warn("User profile not found for phone:", phone);
+                }
                 localStorage.removeItem('medflow_uid');
                 localStorage.removeItem('medflow_phone');
-                window.location.reload();
+                window.location.href = '/';
                 return;
             }
         } catch (e: any) {
-            console.error("Profile load error", e);
+            if (import.meta.env.DEV) {
+                console.error("Profile load error", e);
+            }
         } finally {
             setIsLoadingProfile(false);
         }
@@ -174,107 +221,146 @@ const useUserProfile = () => {
 
 const useContracts = (currentUser: UserProfile | null) => {
   const [contracts, setContracts] = useState<Contract[]>([]);
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  useEffect(() => {
-    if (!currentUser || !currentUser.bin) return;
-    
-    const contractsRef = ref(rtdb, 'contracts');
-    
-    const unsubscribe = onValue(contractsRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const contractsData: Contract[] = [];
-        const userBin = currentUser.bin.trim();
-        
-        Object.entries(data).forEach(([id, contract]: [string, any]) => {
-          const clientBin = contract.clientBin ? contract.clientBin.toString().trim() : '';
-          const clinicBin = contract.clinicBin ? contract.clinicBin.toString().trim() : '';
-          
-          if (clientBin === userBin || clinicBin === userBin) {
-            contractsData.push({ id, ...contract } as Contract);
-          }
-        });
-        
-        contractsData.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-        setContracts(contractsData);
-      } else {
+  const loadContracts = useCallback(async () => {
+    if (!currentUser || !currentUser.bin) {
+      setContracts([]);
+      return;
+    }
+
+    try {
+      const apiContracts = await apiListContractsByBin(currentUser.bin!);
+      // Проверяем, что это массив
+      if (!Array.isArray(apiContracts)) {
+        if (import.meta.env.DEV) {
+          console.warn("Contracts response is not an array:", apiContracts);
+        }
         setContracts([]);
+        return;
       }
-    }, (error) => {
-      console.warn("Contracts listener error", error);
-    });
-
-    return () => unsubscribe();
+      const mapped: Contract[] = apiContracts.map((c: ApiContract) => ({
+        id: String(c.id),
+        number: c.number,
+        clientName: c.clientName,
+        clientBin: c.clientBin,
+        clientSigned: c.clientSigned,
+        clinicName: c.clinicName,
+        clinicBin: c.clinicBin,
+        clinicSigned: c.clinicSigned,
+        date: c.date,
+        status: c.status as any,
+        price: c.price,
+        plannedHeadcount: c.plannedHeadcount,
+        employees: (c.employees as any) || [],
+        doctors: [],
+        calendarPlan: c.calendarPlan ? {
+          startDate: c.calendarPlan.startDate,
+          endDate: c.calendarPlan.endDate,
+          status: c.calendarPlan.status,
+          rejectReason: c.calendarPlan.rejectReason,
+        } : undefined,
+        documents: (c.documents as any) || [],
+        clientSignOtp: c.clientSignOtp,
+        clinicSignOtp: c.clinicSignOtp,
+        finalActContent: undefined,
+        healthPlanContent: undefined,
+      }));
+      setContracts(mapped);
+    } catch (e) {
+      if (import.meta.env.DEV) {
+        console.warn("Contracts load error", e);
+      }
+      setContracts([]);
+    }
   }, [currentUser]);
 
-  return contracts;
+  useEffect(() => {
+    let cancelled = false;
+    loadContracts().then(() => {
+      if (cancelled) return;
+    });
+    return () => { cancelled = true; };
+  }, [loadContracts, refreshKey]);
+
+  const refetchContracts = useCallback(() => {
+    setRefreshKey(prev => prev + 1);
+  }, []);
+
+  const updateContractOptimistic = useCallback((id: string, updates: Partial<Contract>) => {
+    setContracts(prev => prev.map(c => 
+      c.id === id ? { ...c, ...updates } : c
+    ));
+  }, []);
+
+  return { contracts, refetchContracts, updateContractOptimistic };
 };
 
 const useDoctors = (currentUser: UserProfile | null, selectedContract: Contract | null) => {
   const [doctors, setDoctors] = useState<Doctor[]>([]);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const loadDoctors = useCallback(async () => {
+    if (!currentUser) {
+      setDoctors([]);
+      return;
+    }
+
+    let clinicUid: string | null = null;
+
+    if (currentUser.role === 'clinic') {
+      clinicUid = currentUser.uid;
+    } else if (currentUser.role === 'organization' && selectedContract) {
+      // для организации врачей берем по клинике из контракта не зная clinicUid,
+      // поэтому на этом уровне пока не загружаем список (можно реализовать позже через поиск клиники по BIN)
+      clinicUid = null;
+    }
+
+    if (!clinicUid) {
+      setDoctors([]);
+      return;
+    }
+
+    try {
+      // apiListDoctors уже делает URL-encode внутри
+      const apiDoctors = await apiListDoctors(clinicUid!);
+      // Проверяем, что это массив
+      if (!Array.isArray(apiDoctors)) {
+        if (import.meta.env.DEV) {
+          console.warn("Doctors response is not an array:", apiDoctors);
+        }
+        setDoctors([]);
+        return;
+      }
+      const mapped: Doctor[] = apiDoctors.map((d: ApiDoctor) => ({
+        id: String(d.id),
+        name: d.name,
+        specialty: d.specialty,
+        phone: d.phone,
+        isChairman: d.isChairman,
+      }));
+      setDoctors(mapped);
+    } catch (e) {
+      if (import.meta.env.DEV) {
+        console.error('Error loading doctors:', e);
+      }
+      setDoctors([]);
+    }
+  }, [currentUser, selectedContract?.id]);
 
   useEffect(() => {
-      if (!currentUser) return;
+    let cancelled = false;
+    loadDoctors().then(() => {
+      if (cancelled) return;
+    });
+    return () => { cancelled = true; };
+  }, [loadDoctors, refreshKey]);
 
-      let clinicUid: string | null = null;
+  const refetchDoctors = useCallback(() => {
+    setRefreshKey(prev => prev + 1);
+  }, []);
 
-      // Определяем UID клиники в зависимости от роли пользователя
-      if (currentUser.role === 'clinic') {
-        clinicUid = currentUser.uid;
-      } else if (selectedContract && selectedContract.clinicBin) {
-        // Для организации или других ролей - ищем клинику по BIN из договора
-        const findClinicByBin = async () => {
-          try {
-            const usersRef = ref(rtdb, 'users');
-            const usersSnapshot = await get(usersRef);
-            if (usersSnapshot.exists()) {
-              const users = usersSnapshot.val();
-              const clinicUser = Object.values(users).find((u: any) => 
-                u.role === 'clinic' && u.bin === selectedContract.clinicBin
-              ) as any;
-              
-              if (clinicUser && clinicUser.uid) {
-                clinicUid = clinicUser.uid;
-                loadDoctorsForClinic(clinicUid);
-              }
-            }
-          } catch (error) {
-            console.error('Error finding clinic by BIN:', error);
-          }
-        };
-
-        findClinicByBin();
-        return; // Выходим, так как загрузка будет асинхронной
-      }
-
-      if (clinicUid) {
-        loadDoctorsForClinic(clinicUid);
-      }
-
-      function loadDoctorsForClinic(uid: string) {
-        const doctorsRef = ref(rtdb, `clinics/${uid}/doctors`);
-        const unsubscribe = onValue(doctorsRef, (snapshot) => {
-            const data = snapshot.val();
-            if (data) {
-                const loadedDoctors: Doctor[] = Object.entries(data).map(([key, val]: any) => ({
-                    id: key,
-                    name: val.name,
-                    specialty: val.specialty,
-                    phone: val.phone || undefined,
-                    isChairman: val.isChairman
-                }));
-                console.log('Loaded doctors for contract:', loadedDoctors.length, loadedDoctors.map(d => `${d.name} (${d.specialty})`));
-                setDoctors(loadedDoctors);
-            } else {
-                setDoctors([]);
-            }
-        });
-
-        return () => unsubscribe();
-      }
-  }, [currentUser, selectedContract?.clinicBin]);
-
-  return doctors;
+  return { doctors, refetchDoctors };
 };
 
 // --- TOAST HOOK ---
@@ -306,7 +392,7 @@ const useToast = () => {
 // --- MAIN COMPONENT ---
 const Dashboard: React.FC = () => {
   const { currentUser, isLoadingProfile } = useUserProfile();
-  const contracts = useContracts(currentUser);
+  const { contracts, refetchContracts, updateContractOptimistic } = useContracts(currentUser);
 
   const { toast, showToast } = useToast();
 
@@ -317,19 +403,34 @@ const Dashboard: React.FC = () => {
   // --- CONTRACT ACTIONS ---
   const updateContract = useCallback(async (id: string, updates: Partial<Contract>) => {
     try {
-        const contractRef = ref(rtdb, `contracts/${id}`);
-        await update(contractRef, updates);
+      const numericId = Number(id);
+      if (!Number.isFinite(numericId)) {
+        console.error("Invalid contract id", id);
+        return;
+      }
+      // Оптимистичное обновление для мгновенного отображения изменений
+      updateContractOptimistic(id, updates);
+      await apiUpdateContract(numericId, updates as any);
+      // Обновляем список контрактов после успешного обновления для синхронизации с сервером
+      // Используем setTimeout для гарантии, что обновление произойдет после завершения запроса
+      setTimeout(() => {
+        refetchContracts();
+      }, 100);
     } catch (e) {
-        console.error("Update error", e);
-        showToast('error', 'Ошибка обновления договора');
+      console.error("Update error", e);
+      showToast('error', 'Ошибка обновления договора');
+      // В случае ошибки откатываем оптимистичное обновление
+      setTimeout(() => {
+        refetchContracts();
+      }, 100);
     }
-  }, [showToast]);
+  }, [showToast, refetchContracts, updateContractOptimistic]);
 
   const selectedContract = useMemo(() => {
     return contracts.find(c => c.id === selectedContractId);
   }, [contracts, selectedContractId]);
 
-  const doctors = useDoctors(currentUser, selectedContract);
+  const { doctors, refetchDoctors } = useDoctors(currentUser, selectedContract);
 
   const employees = useMemo(() => {
     return selectedContract?.employees || [];
@@ -367,6 +468,7 @@ const Dashboard: React.FC = () => {
         onContractSelect={setSelectedContractId}
         updateContract={updateContract}
         showToast={showToast}
+        refetchContracts={refetchContracts}
       />
     </div>
   );
@@ -439,7 +541,7 @@ const Header: React.FC<HeaderProps> = React.memo(({
   const handleLogout = useCallback(() => {
     localStorage.removeItem('medflow_uid');
     localStorage.removeItem('medflow_phone');
-    window.location.reload();
+    window.location.href = '/';
   }, []);
 
   return (
@@ -533,6 +635,7 @@ interface MainContentProps {
   onContractSelect: (id: string | null) => void;
   updateContract: (id: string, updates: Partial<Contract>) => Promise<void>;
   showToast: (type: ToastType, message: string, duration?: number) => void;
+  refetchContracts: () => void;
 }
 
 const MainContent: React.FC<MainContentProps> = ({ 
@@ -543,7 +646,9 @@ const MainContent: React.FC<MainContentProps> = ({
   activeSidebarItem,
   onContractSelect,
   updateContract,
-  showToast
+  showToast,
+  refetchContracts,
+  refetchDoctors
 }) => {
   if (activeSidebarItem === 'contracts' && selectedContract) {
     return (
@@ -571,6 +676,7 @@ const MainContent: React.FC<MainContentProps> = ({
             contracts={contracts}
             onContractSelect={onContractSelect}
             showToast={showToast}
+            refetchContracts={refetchContracts}
           />
         </React.Suspense>
       </div>
@@ -585,6 +691,7 @@ const MainContent: React.FC<MainContentProps> = ({
             currentUser={currentUser}
             doctors={doctors}
             showToast={showToast}
+            onDoctorsChange={refetchDoctors}
           />
         </React.Suspense>
       </div>

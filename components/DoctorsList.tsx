@@ -1,10 +1,10 @@
 import React, { useState, useCallback } from 'react';
 import { Doctor, UserProfile } from '../types';
-import { rtdb, ref, push, set, remove, get, query, orderByChild, equalTo } from '../services/firebase';
-import { updateRouteSheetsForNewDoctor } from '../utils/routeSheetGenerator';
+import { apiListDoctors, apiCreateDoctor, apiUpdateDoctor, apiDeleteDoctor, apiCreateUser } from '../services/api';
 import { 
   UserMdIcon, PlusIcon, TrashIcon, PenIcon, LoaderIcon, CheckShieldIcon
 } from './Icons';
+import ConfirmDialog from './ConfirmDialog';
 
 // Полный список специальностей из factorRules + дополнительные роли
 // Определяем, является ли специальность врачебной (требует телефон)
@@ -50,12 +50,14 @@ interface DoctorsListProps {
   currentUser: UserProfile | null;
   doctors: Doctor[];
   showToast: (type: 'success' | 'error' | 'info', message: string, duration?: number) => void;
+  onDoctorsChange?: () => void;
 }
 
 const DoctorsList: React.FC<DoctorsListProps> = ({ 
   currentUser, 
   doctors, 
-  showToast 
+  showToast,
+  onDoctorsChange
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingDoctor, setEditingDoctor] = useState<Doctor | null>(null);
@@ -71,20 +73,46 @@ const DoctorsList: React.FC<DoctorsListProps> = ({
     setIsModalOpen(true);
   }, []);
 
-  const handleDeleteDoctor = useCallback(async (doctorId: string) => {
-    if (!currentUser || !window.confirm('Вы уверены, что хотите удалить этого врача?')) {
-      return;
-    }
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    variant?: 'danger' | 'warning' | 'info';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+    variant: 'danger'
+  });
 
-    try {
-      const doctorRef = ref(rtdb, `clinics/${currentUser.uid}/doctors/${doctorId}`);
-      await remove(doctorRef);
-      showToast('success', 'Врач успешно удален');
-    } catch (error) {
-      console.error('Error deleting doctor:', error);
-      showToast('error', 'Ошибка при удалении врача');
-    }
-  }, [currentUser, showToast]);
+  const handleDeleteDoctor = useCallback((doctorId: string) => {
+    if (!currentUser) return;
+    
+    const doctor = doctors.find(d => d.id === doctorId);
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Удалить врача?',
+      message: doctor ? `Вы уверены, что хотите удалить врача "${doctor.name}" (${doctor.specialty})?` : 'Вы уверены, что хотите удалить этого врача?',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          await apiDeleteDoctor(currentUser.uid, Number(doctorId));
+          showToast('success', 'Врач успешно удален');
+          setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+          // Обновляем список врачей
+          if (onDoctorsChange) {
+            onDoctorsChange();
+          }
+        } catch (error) {
+          console.error('Error deleting doctor:', error);
+          showToast('error', 'Ошибка при удалении врача');
+          setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+        }
+      }
+    });
+  }, [currentUser, doctors, showToast]);
 
   const handleSaveDoctor = useCallback(async (doctorData: { name: string; specialty: string; phone: string; isChairman: boolean }) => {
     if (!currentUser) return;
@@ -95,20 +123,17 @@ const DoctorsList: React.FC<DoctorsListProps> = ({
       
       if (editingDoctor) {
         // Обновление существующего врача
-        const doctorRef = ref(rtdb, `clinics/${currentUser.uid}/doctors/${editingDoctor.id}`);
-        const doctorDataToSave = {
+        await apiUpdateDoctor(currentUser.uid, Number(editingDoctor.id), {
           name: doctorData.name,
           specialty: doctorData.specialty,
-          phone: cleanPhone || null,
-          isChairman: doctorData.isChairman
-        };
-        await set(doctorRef, doctorDataToSave);
-        
-        // Если есть телефон и это врачебная специальность, создаем/обновляем аккаунт врача
+          phone: cleanPhone || '',
+          isChairman: doctorData.isChairman,
+        });
+
         if (cleanPhone && isMedicalSpecialty(doctorData.specialty)) {
-          await createOrUpdateDoctorAccount(editingDoctor.id, {
-            ...doctorDataToSave,
+          await createOrUpdateDoctorAccount(String(editingDoctor.id), {
             phone: cleanPhone,
+            specialty: doctorData.specialty,
             clinicId: currentUser.uid,
             clinicBin: currentUser.bin,
           });
@@ -117,44 +142,30 @@ const DoctorsList: React.FC<DoctorsListProps> = ({
         showToast('success', 'Врач успешно обновлен');
       } else {
         // Добавление нового врача
-        const doctorsRef = ref(rtdb, `clinics/${currentUser.uid}/doctors`);
-        const newDoctorRef = await push(doctorsRef, {
+        const created = await apiCreateDoctor(currentUser.uid, {
           name: doctorData.name,
           specialty: doctorData.specialty,
-          phone: cleanPhone || null,
-          isChairman: doctorData.isChairman
+          phone: cleanPhone || '',
+          isChairman: doctorData.isChairman,
         });
-        const newDoctorId = newDoctorRef.key!;
-        
-        // Если есть телефон и это врачебная специальность, создаем аккаунт врача
+
         if (cleanPhone && isMedicalSpecialty(doctorData.specialty)) {
-          await createOrUpdateDoctorAccount(newDoctorId, {
-            name: doctorData.name,
-            specialty: doctorData.specialty,
+          await createOrUpdateDoctorAccount(String(created.id), {
             phone: cleanPhone,
-            isChairman: doctorData.isChairman,
+            specialty: doctorData.specialty,
             clinicId: currentUser.uid,
             clinicBin: currentUser.bin,
           });
         }
         
         showToast('success', 'Врач успешно добавлен');
-        
-        // Обновляем маршрутные листы для нового врача
-        try {
-          await updateRouteSheetsForNewDoctor({
-            id: newDoctorId,
-            name: doctorData.name,
-            specialty: doctorData.specialty,
-            phone: cleanPhone || undefined,
-            isChairman: doctorData.isChairman
-          }, currentUser.uid);
-        } catch (error) {
-          console.error('Error updating route sheets for new doctor:', error);
-        }
       }
       setIsModalOpen(false);
       setEditingDoctor(null);
+      // Обновляем список врачей
+      if (onDoctorsChange) {
+        onDoctorsChange();
+      }
     } catch (error) {
       console.error('Error saving doctor:', error);
       showToast('error', 'Ошибка при сохранении врача');
@@ -163,42 +174,20 @@ const DoctorsList: React.FC<DoctorsListProps> = ({
     }
   }, [currentUser, editingDoctor, showToast]);
 
-  // Функция создания/обновления аккаунта врача
+  // Функция создания аккаунта врача в системе (через новый API пользователей)
   const createOrUpdateDoctorAccount = async (doctorId: string, doctorData: any) => {
     try {
-      // Проверяем, существует ли уже пользователь с таким телефоном
-      const usersRef = ref(rtdb, 'users');
-      const phoneQuery = query(usersRef, orderByChild('phone'), equalTo(doctorData.phone));
-      const snapshot = await get(phoneQuery);
-      
-      let userId: string;
-      
-      if (snapshot.exists() && snapshot.val()) {
-        // Пользователь уже существует - обновляем
-        const users = snapshot.val();
-        userId = Object.keys(users)[0];
-        await set(ref(rtdb, `users/${userId}`), {
-          ...users[userId],
-          role: 'doctor',
-          doctorId: doctorId,
-          clinicId: doctorData.clinicId,
-          clinicBin: doctorData.clinicBin,
-          specialty: doctorData.specialty,
-        });
-      } else {
-        // Создаем нового пользователя
-        userId = 'doctor_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-        await set(ref(rtdb, `users/${userId}`), {
-          uid: userId,
-          role: 'doctor',
-          phone: doctorData.phone,
-          doctorId: doctorId,
-          clinicId: doctorData.clinicId,
-          clinicBin: doctorData.clinicBin,
-          specialty: doctorData.specialty,
-          createdAt: new Date().toISOString(),
-        });
-      }
+      const userId = 'doctor_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      await apiCreateUser({
+        uid: userId,
+        role: 'doctor',
+        phone: doctorData.phone,
+        doctorId,
+        clinicId: doctorData.clinicId,
+        clinicBin: doctorData.clinicBin,
+        specialty: doctorData.specialty,
+        createdAt: new Date().toISOString(),
+      } as any);
     } catch (error) {
       console.error('Error creating doctor account:', error);
     }
@@ -248,6 +237,18 @@ const DoctorsList: React.FC<DoctorsListProps> = ({
           isSaving={isSaving}
         />
       )}
+
+      {/* Confirm Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        variant={confirmDialog.variant}
+        confirmText="Удалить"
+        cancelText="Отмена"
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+      />
     </main>
   );
 };
@@ -567,7 +568,7 @@ const DoctorModal: React.FC<DoctorModalProps> = ({ doctor, onClose, onSave, isSa
                 isSaving || 
                 !name.trim() || 
                 !specialty.trim() || 
-                (isMedicalSpecialty(specialty) && !phone.trim())
+                (isMedicalSpecialty(specialty) && !phone.replace(/\D/g, '').trim())
               }
               className="flex-1 px-4 py-2.5 bg-slate-900 text-white rounded-xl font-bold hover:bg-black transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >

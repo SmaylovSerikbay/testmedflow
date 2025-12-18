@@ -1,6 +1,5 @@
-import { ref, set, get, query, orderByChild, equalTo } from '../services/firebase';
-import { rtdb } from '../services/firebase';
-import { Employee, UserProfile } from '../types';
+import { Employee } from '../types';
+import { apiGetUserByPhone, apiCreateUser, apiGetContract, ApiUser } from '../services/api';
 
 /**
  * Извлекает номер телефона из поля примечание
@@ -40,65 +39,121 @@ export function extractPhoneFromNote(note: string | undefined): string | null {
 }
 
 /**
- * Автоматически регистрирует сотрудника в системе, если в примечании есть телефон
+ * Автоматически регистрирует сотрудника в системе, если есть телефон в примечании или в поле phone
  */
 export async function autoRegisterEmployee(
   employee: Employee,
   contractId: string
 ): Promise<{ userId: string | null; phone: string | null }> {
-  const phone = extractPhoneFromNote(employee.note);
+  // Сначала проверяем поле phone, если его нет - извлекаем из note
+  let phone: string | null = null;
+  
+  if (employee.phone) {
+    // Нормализуем телефон из поля phone
+    const normalized = employee.phone.replace(/\D/g, '');
+    if (normalized.startsWith('8')) {
+      phone = '7' + normalized.substring(1);
+    } else if (normalized.length === 10) {
+      phone = '7' + normalized;
+    } else if (normalized.length === 11 && normalized.startsWith('7')) {
+      phone = normalized;
+    }
+  }
+  
+  // Если телефона нет в поле phone, пытаемся извлечь из note
+  if (!phone) {
+    phone = extractPhoneFromNote(employee.note);
+  }
   
   if (!phone) {
     return { userId: null, phone: null };
   }
   
   try {
+    console.log('🔍 Checking if user exists with phone:', phone);
+    
+    // Получаем bin организации из договора
+    let organizationBin: string | undefined;
+    try {
+      const contractIdNum = parseInt(contractId, 10);
+      if (!isNaN(contractIdNum)) {
+        const contract = await apiGetContract(contractIdNum);
+        organizationBin = contract.clientBin;
+        console.log('📋 Got organization bin from contract:', organizationBin);
+      }
+    } catch (error) {
+      console.warn('⚠️ Could not load contract to get bin:', error);
+    }
+    
     // Проверяем, существует ли уже пользователь с таким телефоном
-    const usersRef = ref(rtdb, 'users');
-    const phoneQuery = query(usersRef, orderByChild('phone'), equalTo(phone));
-    const snapshot = await get(phoneQuery);
+    const existingUser = await apiGetUserByPhone(phone);
     
     let userId: string;
     
-    if (snapshot.exists() && snapshot.val()) {
+    if (existingUser) {
       // Пользователь уже существует
-      const users = snapshot.val();
-      userId = Object.keys(users)[0];
+      console.log('👤 User already exists:', existingUser);
+      userId = existingUser.uid;
       
       // Обновляем данные пользователя, если нужно
-      const existingUser = users[userId] as UserProfile;
-      if (existingUser.role !== 'employee' || existingUser.employeeId !== employee.id) {
-        console.log('🔄 Updating existing user to employee role:', userId, existingUser);
-        await set(ref(rtdb, `users/${userId}`), {
-          ...existingUser,
+      if (existingUser.role !== 'employee' || existingUser.employeeId !== employee.id || existingUser.contractId !== contractId) {
+        console.log('🔄 Updating existing user to employee role:', userId, {
+          currentRole: existingUser.role,
+          currentEmployeeId: existingUser.employeeId,
+          newEmployeeId: employee.id,
+          currentContractId: existingUser.contractId,
+          newContractId: contractId,
+        });
+        await apiCreateUser({
+          uid: userId,
           role: 'employee',
+          phone: phone,
+          bin: organizationBin || existingUser.bin, // Сохраняем bin из договора
           employeeId: employee.id,
           contractId: contractId,
-        });
+          createdAt: existingUser.createdAt,
+        } as ApiUser);
         console.log('✅ Existing user updated to employee role');
       } else {
-        console.log('👤 User already exists as employee:', userId);
+        // Обновляем bin, если его нет, но есть в договоре
+        if (!existingUser.bin && organizationBin) {
+          console.log('📝 Updating user bin from contract:', organizationBin);
+          await apiCreateUser({
+            uid: userId,
+            role: 'employee',
+            phone: phone,
+            bin: organizationBin,
+            employeeId: employee.id,
+            contractId: contractId,
+            createdAt: existingUser.createdAt,
+          } as ApiUser);
+        } else {
+          console.log('👤 User already exists as employee with correct data:', userId);
+        }
       }
     } else {
       // Создаем нового пользователя
       userId = 'employee_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
       
-      const userData: UserProfile = {
+      const userData: ApiUser = {
         uid: userId,
         role: 'employee',
         phone: phone,
+        bin: organizationBin, // Сохраняем bin из договора
         employeeId: employee.id,
         contractId: contractId,
+        createdAt: new Date().toISOString(),
       };
       
       console.log('🔥 Creating new employee user:', userData);
-      await set(ref(rtdb, `users/${userId}`), userData);
-      console.log('✅ Employee user created successfully in Firebase');
+      await apiCreateUser(userData);
+      console.log('✅ Employee user created successfully via Go API');
     }
     
     return { userId, phone };
   } catch (error) {
-    console.error('Error auto-registering employee:', error);
+    console.error('❌ Error auto-registering employee:', error);
+    console.error('Employee data:', { name: employee.name, note: employee.note, phone: employee.phone });
     return { userId: null, phone };
   }
 }
@@ -110,29 +165,73 @@ export async function processEmployeesForAutoRegistration(
   employees: Employee[],
   contractId: string
 ): Promise<Employee[]> {
+  console.log('🔄 Processing employees for auto-registration:', {
+    totalEmployees: employees.length,
+    contractId,
+    employeesWithUserId: employees.filter(e => e.userId).length,
+  });
+  
   const updatedEmployees: Employee[] = [];
   
   for (const employee of employees) {
-    // Если у сотрудника уже есть userId, пропускаем
+    console.log(`\n👤 Processing employee: ${employee.name}`, {
+      hasUserId: !!employee.userId,
+      hasPhone: !!employee.phone,
+      hasNote: !!employee.note,
+      note: employee.note,
+    });
+    
+    // Если у сотрудника уже есть userId, проверяем, не нужно ли обновить данные
     if (employee.userId) {
-      updatedEmployees.push(employee);
+      // Проверяем, есть ли телефон в note, но нет в phone - обновляем phone
+      const phoneFromNote = extractPhoneFromNote(employee.note);
+      if (phoneFromNote && phoneFromNote !== employee.phone) {
+        console.log('📞 Updating phone for employee:', employee.name, 'from note:', phoneFromNote);
+        updatedEmployees.push({
+          ...employee,
+          phone: phoneFromNote,
+        });
+      } else {
+        updatedEmployees.push(employee);
+      }
       continue;
     }
     
     // Пытаемся извлечь телефон и зарегистрировать
+    console.log('🔍 Attempting to register employee:', employee.name);
     const { userId, phone } = await autoRegisterEmployee(employee, contractId);
     
     if (userId && phone) {
-      console.log('✅ Employee will be updated with userId:', employee.name, 'userId:', userId);
+      console.log('✅ Employee registered successfully:', {
+        name: employee.name,
+        userId,
+        phone,
+      });
       updatedEmployees.push({
         ...employee,
         phone: phone,
         userId: userId,
       });
     } else {
-      updatedEmployees.push(employee);
+      // Если телефон не найден, но есть в note - сохраняем его в phone для будущей регистрации
+      const phoneFromNote = extractPhoneFromNote(employee.note);
+      if (phoneFromNote && phoneFromNote !== employee.phone) {
+        console.log('📝 Saving phone from note for future registration:', employee.name, phoneFromNote);
+        updatedEmployees.push({
+          ...employee,
+          phone: phoneFromNote,
+        });
+      } else {
+        console.log('⚠️ No phone found for employee:', employee.name);
+        updatedEmployees.push(employee);
+      }
     }
   }
+  
+  console.log('✅ Auto-registration processing complete:', {
+    totalProcessed: updatedEmployees.length,
+    registered: updatedEmployees.filter(e => e.userId).length,
+  });
   
   return updatedEmployees;
 }

@@ -1,9 +1,24 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { UserProfile, Contract, Employee, DoctorRouteSheet, DoctorExamination, AmbulatoryCard } from '../types';
-import { rtdb, ref, get, set, onValue, query, orderByChild, equalTo } from '../services/firebase';
 import { FACTOR_RULES, FactorRule } from '../factorRules';
-import { LoaderIcon, UserMdIcon, FileTextIcon, CheckShieldIcon, LogoutIcon, AlertCircleIcon, SearchIcon, FilterIcon } from './Icons';
+import { LoaderIcon, UserMdIcon, FileTextIcon, CheckShieldIcon, LogoutIcon, AlertCircleIcon, SearchIcon, FilterIcon, CalendarIcon, ClockIcon } from './Icons';
 import FinalConclusionModal from './FinalConclusionModal';
+import Form052Editor from './Form052Editor';
+import { Form052Data } from '../types/form052';
+import {
+  apiListContractsByBin,
+  apiListRouteSheets,
+  apiCreateRouteSheet,
+  apiUpdateRouteSheet,
+  apiGetAmbulatoryCard,
+  apiListAmbulatoryCardsByContract,
+  apiCreateAmbulatoryCard,
+  apiUpdateAmbulatoryCard,
+  apiGetUserByUid,
+  apiCreateUser,
+  ApiRouteSheet,
+  ApiAmbulatoryCard
+} from '../services/api';
 
 interface DoctorDashboardProps {
   currentUser: UserProfile;
@@ -34,6 +49,8 @@ const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ currentUser }) => {
   const [showFinalConclusionModal, setShowFinalConclusionModal] = useState(false);
   const [selectedEmployeeForConclusion, setSelectedEmployeeForConclusion] = useState<Employee | null>(null);
   const [ambulatoryCards, setAmbulatoryCards] = useState<Record<string, AmbulatoryCard>>({});
+  const [showForm052, setShowForm052] = useState(false);
+  const [form052Data, setForm052Data] = useState<Form052Data | null>(null);
   
   // Состояния для поиска и пагинации
   const [searchQuery, setSearchQuery] = useState('');
@@ -191,121 +208,366 @@ const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ currentUser }) => {
       createdAt: new Date().toISOString(),
     };
 
-    await set(ref(rtdb, `routeSheets/${doctorId}_${contractId}`), newRouteSheet);
-    setRouteSheet(newRouteSheet);
-    console.log('Route sheet created successfully:', newRouteSheet);
+    try {
+      const contractIdNum = parseInt(contractId, 10);
+      if (isNaN(contractIdNum)) {
+        console.error('Invalid contractId:', contractId);
+        return;
+      }
+
+      const apiRouteSheet = await apiCreateRouteSheet({
+        doctorId,
+        contractId: contractIdNum,
+        specialty: currentUser.specialty,
+        virtualDoctor: false,
+        employees: newRouteSheet.employees,
+      });
+
+      // Конвертируем обратно в DoctorRouteSheet для совместимости
+      const convertedRouteSheet: DoctorRouteSheet = {
+        id: String(apiRouteSheet.id),
+        doctorId: apiRouteSheet.doctorId,
+        contractId: String(apiRouteSheet.contractId),
+        specialty: apiRouteSheet.specialty,
+        virtualDoctor: apiRouteSheet.virtualDoctor,
+        employees: apiRouteSheet.employees,
+        createdAt: apiRouteSheet.createdAt,
+      };
+      
+      setRouteSheet(convertedRouteSheet);
+      console.log('Route sheet created successfully:', convertedRouteSheet);
+    } catch (error) {
+      console.error('Error creating route sheet:', error);
+    }
   }, [currentUser.specialty, resolveFactorRules]);
 
-  // Загружаем данные договора и маршрутного листа
-  useEffect(() => {
-    if (!currentUser.doctorId || !currentUser.clinicId) {
-      setIsLoading(false);
+  // Загрузка амбулаторных карт для профпатолога
+  const loadAmbulatoryCards = useCallback(async (contractId: string, employeesList: Employee[]) => {
+    const cards: Record<string, AmbulatoryCard> = {};
+    const contractIdNum = parseInt(contractId, 10);
+    
+    if (isNaN(contractIdNum)) {
+      console.error('Invalid contractId:', contractId);
       return;
     }
 
+    try {
+      for (const emp of employeesList) {
+        try {
+          let card = await apiGetAmbulatoryCard(emp.id, contractIdNum);
+          if (!card) {
+            // Создаем новую амбулаторную карту
+            card = await apiCreateAmbulatoryCard({
+              employeeId: emp.id,
+              contractId: contractIdNum,
+              personalInfo: {
+                fullName: emp.name,
+                dateOfBirth: emp.dob,
+                gender: emp.gender || 'М',
+                address: emp.address || '',
+                workplace: emp.workplace || '',
+                position: emp.position,
+                bloodType: emp.bloodType || '',
+                rhFactor: emp.rhFactor || '',
+              },
+              examinations: {},
+            });
+          }
+          
+          if (card) {
+            const cardData: AmbulatoryCard = {
+              employeeId: card.employeeId,
+              contractId: String(card.contractId),
+              cardNumber: card.cardNumber,
+              personalInfo: card.personalInfo as any,
+              anamnesis: card.anamnesis as any,
+              vitals: card.vitals as any,
+              labTests: card.labTests as any,
+              examinations: card.examinations as any,
+              finalConclusion: card.finalConclusion as any,
+              createdAt: card.createdAt,
+              updatedAt: card.updatedAt,
+            };
+            cards[emp.id] = cardData;
+          }
+        } catch (error) {
+          console.error(`Error loading ambulatory card for employee ${emp.id}:`, error);
+        }
+      }
+      
+      setAmbulatoryCards(cards);
+    } catch (error) {
+      console.error('Error loading ambulatory cards:', error);
+    }
+  }, []);
+
+  // Загружаем данные договора и маршрутного листа
+  useEffect(() => {
     const loadData = async () => {
+      // Определяем clinicBin - используем clinicBin, если есть, иначе bin
+      let clinicBin = currentUser.clinicBin || currentUser.bin;
+      
+      // Если у врача нет clinicBin, но есть clinicId, пытаемся получить bin клиники
+      if (!clinicBin && currentUser.clinicId) {
+        try {
+          console.log('Trying to get clinic bin from clinicId (uid):', currentUser.clinicId);
+          // Ищем клинику по uid (clinicId)
+          const clinicUser = await apiGetUserByUid(currentUser.clinicId);
+          if (clinicUser && clinicUser.bin) {
+            clinicBin = clinicUser.bin;
+            console.log('Found clinic bin:', clinicBin);
+            // Обновляем пользователя в базе с найденным clinicBin
+            try {
+              await apiCreateUser({
+                uid: currentUser.uid,
+                role: currentUser.role,
+                phone: currentUser.phone,
+                bin: currentUser.bin,
+                companyName: currentUser.companyName,
+                leaderName: currentUser.leaderName,
+                doctorId: currentUser.doctorId,
+                clinicId: currentUser.clinicId,
+                specialty: currentUser.specialty,
+                clinicBin: clinicBin,
+                createdAt: currentUser.createdAt,
+              } as any);
+            } catch (error) {
+              console.error('Error updating doctor clinicBin:', error);
+            }
+          }
+        } catch (error) {
+          console.error('Error getting clinic bin:', error);
+        }
+      }
+      
+      // Проверяем наличие необходимых данных для врача
+      if (!clinicBin) {
+        console.log('Missing clinicBin/bin for doctor:', currentUser);
+        setIsLoading(false);
+        return;
+      }
+      
+      if (!currentUser.specialty) {
+        console.log('Missing specialty for doctor:', currentUser);
+        setIsLoading(false);
+        return;
+      }
+
       try {
-        // Шаг 1: Если contractId указан в профиле, используем его
-        if (currentUser.contractId) {
-          const contractRef = ref(rtdb, `contracts/${currentUser.contractId}`);
-          const contractSnapshot = await get(contractRef);
-          if (contractSnapshot.exists()) {
-            const contractData = { id: currentUser.contractId, ...contractSnapshot.val() } as Contract;
+        // Шаг 1: Ищем маршрутные листы для этого врача
+        // Сначала ищем по doctorId, если он есть
+        let routeSheets: any[] = [];
+        if (currentUser.doctorId) {
+          console.log('Searching for route sheets by doctorId:', currentUser.doctorId);
+          routeSheets = await apiListRouteSheets({ doctorId: currentUser.doctorId });
+          console.log('Found route sheets by doctorId:', routeSheets.length);
+        }
+        
+        // Если не нашли по doctorId, ищем по specialty среди всех маршрутных листов клиники
+        if (routeSheets.length === 0 && currentUser.specialty) {
+          console.log('Route sheets not found by doctorId, searching by specialty:', currentUser.specialty);
+          // Получаем все договоры клиники и проверяем маршрутные листы
+          const clinicBin = currentUser.clinicBin || currentUser.bin;
+          if (clinicBin) {
+            const contracts = await apiListContractsByBin(clinicBin);
+            console.log('Found contracts for clinic:', contracts.length);
             
-            // Проверяем, что план утвержден и есть сотрудники
-            if (contractData.calendarPlan?.status === 'approved' && contractData.employees && contractData.employees.length > 0) {
-              setContract(contractData);
-              setEmployees(contractData.employees || []);
-
-              // Загружаем или создаем маршрутный лист
-              const routeSheetRef = ref(rtdb, `routeSheets/${currentUser.doctorId}_${currentUser.contractId}`);
-              const routeSheetSnapshot = await get(routeSheetRef);
-              if (routeSheetSnapshot.exists()) {
-                setRouteSheet({ ...routeSheetSnapshot.val() } as DoctorRouteSheet);
-              } else {
-                await createRouteSheet(currentUser.contractId, currentUser.doctorId, contractData.employees || []);
+            for (const contract of contracts) {
+              if (contract.calendarPlan?.status === 'approved') {
+                console.log('Checking contract:', contract.id, 'for route sheets');
+                const allRouteSheets = await apiListRouteSheets({ contractId: contract.id });
+                console.log('Route sheets for contract:', allRouteSheets.length, allRouteSheets.map(rs => ({
+                  doctorId: rs.doctorId,
+                  specialty: rs.specialty,
+                  virtualDoctor: rs.virtualDoctor
+                })));
+                
+                // Ищем маршрутные листы по specialty
+                const matchingSheets = allRouteSheets.filter(rs => {
+                  const specialtyMatch = rs.specialty === currentUser.specialty;
+                  const doctorIdMatch = !rs.virtualDoctor && (
+                    rs.doctorId === currentUser.doctorId || 
+                    rs.doctorId === String(currentUser.doctorId) ||
+                    (currentUser.phone && rs.doctorId && rs.doctorId.includes(currentUser.phone))
+                  );
+                  const virtualMatch = rs.virtualDoctor && specialtyMatch;
+                  
+                  console.log('Checking route sheet:', {
+                    doctorId: rs.doctorId,
+                    specialty: rs.specialty,
+                    virtualDoctor: rs.virtualDoctor,
+                    specialtyMatch,
+                    doctorIdMatch,
+                    virtualMatch,
+                    currentUserDoctorId: currentUser.doctorId,
+                    currentUserSpecialty: currentUser.specialty
+                  });
+                  
+                  return specialtyMatch && (doctorIdMatch || virtualMatch);
+                });
+                
+                if (matchingSheets.length > 0) {
+                  routeSheets = matchingSheets;
+                  console.log('Found matching route sheets:', matchingSheets.length);
+                  break;
+                }
               }
+            }
+            console.log('Total found route sheets by specialty:', routeSheets.length);
+          }
+        }
+        
+        if (routeSheets.length > 0) {
+          // Берем первый маршрутный лист (можно улучшить логику выбора)
+          const apiRouteSheet = routeSheets[0];
+          const contractId = String(apiRouteSheet.contractId);
+          
+          // Загружаем договор
+          const clinicBin = currentUser.clinicBin || currentUser.bin;
+          if (!clinicBin) {
+            setIsLoading(false);
+            return;
+          }
+          const contracts = await apiListContractsByBin(clinicBin);
+          const contractData = contracts.find(c => String(c.id) === contractId);
+          
+          if (contractData && contractData.calendarPlan?.status === 'approved' && contractData.employees && contractData.employees.length > 0) {
+            // Конвертируем ApiContract в Contract
+            const contract: Contract = {
+              id: String(contractData.id),
+              number: contractData.number,
+              clientName: contractData.clientName,
+              clientBin: contractData.clientBin,
+              clientSigned: contractData.clientSigned,
+              clinicName: contractData.clinicName,
+              clinicBin: contractData.clinicBin,
+              clinicSigned: contractData.clinicSigned,
+              date: contractData.date,
+              status: contractData.status as any,
+              price: contractData.price,
+              plannedHeadcount: contractData.plannedHeadcount,
+              employees: contractData.employees || [],
+              calendarPlan: contractData.calendarPlan,
+              documents: contractData.documents || [],
+            };
+            
+            setContract(contract);
+            setEmployees(contract.employees || []);
+            
+              // Конвертируем ApiRouteSheet в DoctorRouteSheet
+              const routeSheet: DoctorRouteSheet = {
+                id: String(apiRouteSheet.id),
+                doctorId: apiRouteSheet.doctorId,
+                contractId: String(apiRouteSheet.contractId),
+                specialty: apiRouteSheet.specialty,
+                virtualDoctor: apiRouteSheet.virtualDoctor,
+                employees: apiRouteSheet.employees,
+                createdAt: apiRouteSheet.createdAt,
+              };
+              setRouteSheet(routeSheet);
+            
+            // Загружаем амбулаторные карты для профпатолога
+            if (currentUser.specialty === 'Профпатолог') {
+              await loadAmbulatoryCards(contractId, contract.employees || []);
+            }
+            
               setIsLoading(false);
               return;
             }
           }
-        }
 
-        // Шаг 2: Ищем маршрутные листы для этого врача
-        console.log('Searching for route sheets for doctor:', currentUser.doctorId);
-        const routeSheetsRef = ref(rtdb, 'routeSheets');
-        const routeSheetsSnapshot = await get(routeSheetsRef);
-        
-        if (routeSheetsSnapshot.exists()) {
-          const routeSheets = routeSheetsSnapshot.val();
-          console.log('Found route sheets:', Object.keys(routeSheets).length, 'total');
-          
-          // Ищем маршрутные листы этого врача
-          let foundRouteSheet: DoctorRouteSheet | null = null;
-          let foundContractId: string | null = null;
-          
-          Object.entries(routeSheets).forEach(([key, sheet]: [string, any]) => {
-            if (key.startsWith(currentUser.doctorId + '_')) {
-              foundRouteSheet = { ...sheet } as DoctorRouteSheet;
-              foundContractId = sheet.contractId || key.split('_')[1];
-              console.log('Found route sheet by key:', key, 'contractId:', foundContractId);
-            } else if (sheet.doctorId === currentUser.doctorId) {
-              foundRouteSheet = { ...sheet } as DoctorRouteSheet;
-              foundContractId = sheet.contractId;
-              console.log('Found route sheet by doctorId:', key, 'contractId:', foundContractId);
-            }
-          });
-          
-          if (foundRouteSheet && foundContractId) {
-            // Загружаем договор
-            const contractRef = ref(rtdb, `contracts/${foundContractId}`);
-            const contractSnapshot = await get(contractRef);
-            
-            if (contractSnapshot.exists()) {
-              const contractData = { id: foundContractId, ...contractSnapshot.val() } as Contract;
-              console.log('Contract loaded successfully, employees:', contractData.employees?.length || 0);
-              setContract(contractData);
-              setEmployees(contractData.employees || []);
-              setRouteSheet(foundRouteSheet);
-              setIsLoading(false);
-              return;
-            }
-          }
+        // Шаг 2: Ищем договоры клиники с утвержденным планом
+        const clinicBin = currentUser.clinicBin || currentUser.bin;
+        if (!clinicBin) {
+          console.log('Missing clinicBin/bin for doctor:', currentUser);
+          setIsLoading(false);
+          return;
         }
-
-        // Шаг 3: Ищем договоры клиники, к которой привязан врач
-        console.log('Searching for contracts by clinicId:', currentUser.clinicId, 'or clinicBin:', currentUser.clinicBin);
-        const contractsRef = ref(rtdb, 'contracts');
-        const contractsSnapshot = await get(contractsRef);
-        
-        if (contractsSnapshot.exists()) {
-          const contracts = contractsSnapshot.val();
-          const clinicBin = currentUser.clinicBin?.toString().trim() || '';
+        console.log('Searching for contracts by clinicBin:', clinicBin);
+        const contracts = await apiListContractsByBin(clinicBin);
           
-          // Ищем договоры этой клиники с утвержденным планом
-          for (const [contractId, contractData] of Object.entries(contracts)) {
-            const contract = contractData as Contract;
-            const contractClinicBin = contract.clinicBin?.toString().trim() || '';
-            
-            // Проверяем, что это договор нашей клиники и план утвержден
-            if (contractClinicBin === clinicBin && 
-                contract.calendarPlan?.status === 'approved' && 
-                contract.employees && 
-                contract.employees.length > 0) {
+        // Ищем договоры с утвержденным планом
+        for (const apiContract of contracts) {
+          if (apiContract.calendarPlan?.status === 'approved' && 
+              apiContract.employees && 
+              apiContract.employees.length > 0) {
               
+            const contractId = String(apiContract.id);
               console.log('Found contract with approved plan:', contractId);
               
               // Проверяем, есть ли маршрутный лист для этого врача
-              const routeSheetKey = `${currentUser.doctorId}_${contractId}`;
-              const routeSheetRef = ref(rtdb, `routeSheets/${routeSheetKey}`);
-              const routeSheetSnapshot = await get(routeSheetRef);
+            // Сначала ищем по doctorId, если он есть
+            let routeSheets: any[] = [];
+            if (currentUser.doctorId) {
+              routeSheets = await apiListRouteSheets({ 
+                doctorId: currentUser.doctorId, 
+                contractId: apiContract.id 
+              });
+            }
+            
+            // Если не нашли по doctorId, ищем по specialty (для виртуальных врачей или если doctorId не совпадает)
+            if (routeSheets.length === 0 && currentUser.specialty) {
+              console.log('Route sheet not found by doctorId, searching by specialty:', currentUser.specialty);
+              // Получаем все маршрутные листы для этого договора и фильтруем по specialty
+              const allRouteSheets = await apiListRouteSheets({ contractId: apiContract.id });
+              console.log('All route sheets for contract:', allRouteSheets.map(rs => ({
+                doctorId: rs.doctorId,
+                specialty: rs.specialty,
+                virtualDoctor: rs.virtualDoctor
+              })));
               
-              if (routeSheetSnapshot.exists()) {
+              // Ищем маршрутные листы по specialty
+              routeSheets = allRouteSheets.filter(rs => {
+                const specialtyMatch = rs.specialty === currentUser.specialty;
+                // Для виртуальных врачей - просто проверяем specialty
+                if (rs.virtualDoctor) {
+                  return specialtyMatch;
+                }
+                // Для реальных врачей - проверяем совпадение doctorId или ищем по телефону
+                const doctorIdMatch = rs.doctorId === currentUser.doctorId || 
+                                     rs.doctorId === String(currentUser.doctorId);
+                return specialtyMatch && doctorIdMatch;
+              });
+              console.log('Found route sheets by specialty:', routeSheets.length, routeSheets.map(rs => ({
+                doctorId: rs.doctorId,
+                specialty: rs.specialty
+              })));
+            }
+            
+            if (routeSheets.length > 0) {
                 // Маршрутный лист уже существует
-                const routeSheetData = { ...routeSheetSnapshot.val() } as DoctorRouteSheet;
-                setContract({ id: contractId, ...contract } as Contract);
+              const apiRouteSheet = routeSheets[0];
+              const contract: Contract = {
+                id: String(apiContract.id),
+                number: apiContract.number,
+                clientName: apiContract.clientName,
+                clientBin: apiContract.clientBin,
+                clientSigned: apiContract.clientSigned,
+                clinicName: apiContract.clinicName,
+                clinicBin: apiContract.clinicBin,
+                clinicSigned: apiContract.clinicSigned,
+                date: apiContract.date,
+                status: apiContract.status as any,
+                price: apiContract.price,
+                plannedHeadcount: apiContract.plannedHeadcount,
+                employees: apiContract.employees || [],
+                calendarPlan: apiContract.calendarPlan,
+                documents: apiContract.documents || [],
+              };
+              
+              setContract(contract);
                 setEmployees(contract.employees || []);
-                setRouteSheet(routeSheetData);
+              
+              const routeSheet: DoctorRouteSheet = {
+                id: String(apiRouteSheet.id),
+                doctorId: apiRouteSheet.doctorId,
+                contractId: String(apiRouteSheet.contractId),
+                specialty: apiRouteSheet.specialty,
+                virtualDoctor: apiRouteSheet.virtualDoctor,
+                employees: apiRouteSheet.employees,
+                createdAt: apiRouteSheet.createdAt,
+              };
+              setRouteSheet(routeSheet);
                 
                 // Загружаем амбулаторные карты для профпатолога
                 if (currentUser.specialty === 'Профпатолог') {
@@ -317,7 +579,25 @@ const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ currentUser }) => {
               } else {
                 // Создаем маршрутный лист
                 console.log('Creating route sheet for contract:', contractId);
-                setContract({ id: contractId, ...contract } as Contract);
+              const contract: Contract = {
+                id: String(apiContract.id),
+                number: apiContract.number,
+                clientName: apiContract.clientName,
+                clientBin: apiContract.clientBin,
+                clientSigned: apiContract.clientSigned,
+                clinicName: apiContract.clinicName,
+                clinicBin: apiContract.clinicBin,
+                clinicSigned: apiContract.clinicSigned,
+                date: apiContract.date,
+                status: apiContract.status as any,
+                price: apiContract.price,
+                plannedHeadcount: apiContract.plannedHeadcount,
+                employees: apiContract.employees || [],
+                calendarPlan: apiContract.calendarPlan,
+                documents: apiContract.documents || [],
+              };
+              
+              setContract(contract);
                 setEmployees(contract.employees || []);
                 await createRouteSheet(contractId, currentUser.doctorId, contract.employees || []);
                 
@@ -328,7 +608,6 @@ const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ currentUser }) => {
                 
                 setIsLoading(false);
                 return;
-              }
             }
           }
         }
@@ -343,45 +622,28 @@ const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ currentUser }) => {
     };
 
     loadData();
-  }, [currentUser.contractId, currentUser.doctorId, currentUser.clinicId, currentUser.clinicBin, createRouteSheet]);
-
-  // Загрузка амбулаторных карт для профпатолога
-  const loadAmbulatoryCards = useCallback(async (contractId: string, employeesList: Employee[]) => {
-    const cards: Record<string, AmbulatoryCard> = {};
-    
-    for (const emp of employeesList) {
-      try {
-        const cardRef = ref(rtdb, `ambulatoryCards/${emp.id}_${contractId}`);
-        const cardSnapshot = await get(cardRef);
-        if (cardSnapshot.exists()) {
-          cards[emp.id] = cardSnapshot.val() as AmbulatoryCard;
-        }
-      } catch (error) {
-        console.error(`Error loading card for employee ${emp.id}:`, error);
-      }
-    }
-    
-    setAmbulatoryCards(cards);
-  }, []);
+  }, [currentUser.doctorId, currentUser.clinicBin, currentUser.clinicId, currentUser.specialty, createRouteSheet, loadAmbulatoryCards]);
 
   // Сохранение осмотра
   const handleSaveExamination = useCallback(async () => {
-    if (!selectedEmployee || !contract || !currentUser.doctorId) return;
+    if (!selectedEmployee || !contract || !currentUser.doctorId || !currentUser.specialty) return;
 
     setIsSaving(true);
     try {
+      const contractIdNum = parseInt(contract.id, 10);
+      if (isNaN(contractIdNum)) {
+        console.error('Invalid contractId:', contract.id);
+        return;
+      }
+
       // Загружаем или создаем амбулаторную карту
-      const cardRef = ref(rtdb, `ambulatoryCards/${selectedEmployee.id}_${contract.id}`);
-      const cardSnapshot = await get(cardRef);
+      let apiCard = await apiGetAmbulatoryCard(selectedEmployee.id, contractIdNum);
       
-      let card: AmbulatoryCard;
-      if (cardSnapshot.exists()) {
-        card = { ...cardSnapshot.val() } as AmbulatoryCard;
-      } else {
-        // Создаем новую карту с полной структурой
-        card = {
+      if (!apiCard) {
+        // Создаем новую карту
+        apiCard = await apiCreateAmbulatoryCard({
           employeeId: selectedEmployee.id,
-          contractId: contract.id,
+          contractId: contractIdNum,
           cardNumber: `052/${contract.number}/${selectedEmployee.id}`,
           personalInfo: {
             fullName: selectedEmployee.name,
@@ -393,15 +655,13 @@ const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ currentUser }) => {
             harmfulFactors: selectedEmployee.harmfulFactor || '',
           },
           examinations: {},
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
+        });
       }
 
       // Добавляем/обновляем осмотр этого врача
       const examination: DoctorExamination = {
         doctorId: currentUser.doctorId,
-        specialty: currentUser.specialty!,
+        specialty: currentUser.specialty,
         date: new Date().toISOString(),
         status: 'completed',
         complaints: examinationForm.complaints,
@@ -412,23 +672,71 @@ const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ currentUser }) => {
         isFit: examinationForm.isFit,
       };
 
-      card.examinations[currentUser.specialty!] = examination;
-      card.updatedAt = new Date().toISOString();
+      const updatedExaminations = {
+        ...apiCard.examinations,
+        [currentUser.specialty]: examination,
+      };
 
-      await set(cardRef, card);
+      // Обновляем карту со всеми полями
+      const updateData: any = {
+        examinations: updatedExaminations,
+      };
+      
+      // Сохраняем personalInfo если есть изменения
+      if (apiCard.personalInfo) {
+        updateData.personalInfo = apiCard.personalInfo;
+      }
+      
+      // Сохраняем anamnesis если есть
+      if (apiCard.anamnesis) {
+        updateData.anamnesis = apiCard.anamnesis;
+      }
+      
+      // Сохраняем vitals если есть
+      if (apiCard.vitals) {
+        updateData.vitals = apiCard.vitals;
+      }
+      
+      // Сохраняем labTests если есть
+      if (apiCard.labTests) {
+        updateData.labTests = apiCard.labTests;
+      }
+
+      console.log('💾 handleSaveExamination - Updating card with data:', updateData);
+      await apiUpdateAmbulatoryCard(apiCard.id, updateData);
 
       // Обновляем маршрутный лист
       if (routeSheet) {
-        const updatedRouteSheet = {
-          ...routeSheet,
-          employees: routeSheet.employees.map(emp =>
+        const updatedEmployees = routeSheet.employees.map(emp =>
             emp.employeeId === selectedEmployee.id
-              ? { ...emp, status: 'examined', examinationDate: new Date().toISOString() }
+            ? { ...emp, status: 'examined' as const, examinationDate: new Date().toISOString() }
               : emp
-          ),
-        };
-        await set(ref(rtdb, `routeSheets/${currentUser.doctorId}_${contract.id}`), updatedRouteSheet);
-        setRouteSheet(updatedRouteSheet);
+        );
+        
+        // Находим ID маршрутного листа через API
+        try {
+          const routeSheets = await apiListRouteSheets({ 
+            doctorId: currentUser.doctorId, 
+            contractId: contractIdNum 
+          });
+          if (routeSheets.length > 0) {
+            await apiUpdateRouteSheet(routeSheets[0].id, {
+              employees: updatedEmployees,
+            });
+          }
+        } catch (error) {
+          console.error('Error updating route sheet:', error);
+        }
+        
+        setRouteSheet({
+          ...routeSheet,
+          employees: updatedEmployees,
+        });
+      }
+
+      // Перезагружаем амбулаторные карты для профпатолога
+      if (currentUser.specialty === 'Профпатолог' && contract) {
+        await loadAmbulatoryCards(contract.id, employees);
       }
 
       setSelectedEmployee(null);
@@ -445,7 +753,7 @@ const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ currentUser }) => {
     } finally {
       setIsSaving(false);
     }
-  }, [selectedEmployee, contract, currentUser, examinationForm, routeSheet]);
+  }, [selectedEmployee, contract, currentUser, examinationForm, routeSheet, loadAmbulatoryCards, employees]);
 
   // Фильтрация и поиск пациентов
   const filteredEmployees = useMemo(() => {
@@ -590,6 +898,80 @@ const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ currentUser }) => {
       </div>
 
       <div className="max-w-7xl mx-auto px-6 py-8">
+        {/* Статистика */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+          <div className="bg-white rounded-xl border border-slate-200 p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-slate-500 mb-1">Всего пациентов</p>
+                <p className="text-2xl font-bold text-slate-900">{routeSheet.employees.length}</p>
+              </div>
+              <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                <UserMdIcon className="w-6 h-6 text-blue-600" />
+              </div>
+            </div>
+          </div>
+          <div className="bg-white rounded-xl border border-slate-200 p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-slate-500 mb-1">Ожидают осмотра</p>
+                <p className="text-2xl font-bold text-amber-600">
+                  {routeSheet.employees.filter(e => e.status === 'pending').length}
+                </p>
+              </div>
+              <div className="w-12 h-12 bg-amber-100 rounded-lg flex items-center justify-center">
+                <ClockIcon className="w-6 h-6 text-amber-600" />
+              </div>
+            </div>
+          </div>
+          <div className="bg-white rounded-xl border border-slate-200 p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-slate-500 mb-1">Осмотрены</p>
+                <p className="text-2xl font-bold text-green-600">
+                  {routeSheet.employees.filter(e => e.status === 'examined').length}
+                </p>
+              </div>
+              <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+                <CheckShieldIcon className="w-6 h-6 text-green-600" />
+              </div>
+            </div>
+          </div>
+          <div className="bg-white rounded-xl border border-slate-200 p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-slate-500 mb-1">Завершены</p>
+                <p className="text-2xl font-bold text-blue-600">
+                  {Object.values(ambulatoryCards).filter(c => c?.finalConclusion).length}
+                </p>
+              </div>
+              <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                <FileTextIcon className="w-6 h-6 text-blue-600" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Прогресс-бар */}
+        {routeSheet.employees.length > 0 && (
+          <div className="bg-white rounded-xl border border-slate-200 p-4 mb-6">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium text-slate-700">Прогресс осмотра</span>
+              <span className="text-sm text-slate-500">
+                {Math.round((routeSheet.employees.filter(e => e.status === 'examined' || e.status === 'completed').length / routeSheet.employees.length) * 100)}%
+              </span>
+            </div>
+            <div className="w-full bg-slate-200 rounded-full h-2">
+              <div 
+                className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                style={{ 
+                  width: `${(routeSheet.employees.filter(e => e.status === 'examined' || e.status === 'completed').length / routeSheet.employees.length) * 100}%` 
+                }}
+              />
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Маршрутный лист */}
           <div className="lg:col-span-2">
@@ -666,29 +1048,102 @@ const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ currentUser }) => {
                         <div className="flex items-start justify-between gap-4">
                           <div 
                             className="flex-1 cursor-pointer min-w-0"
-                            onClick={() => {
-                              if (employee && currentUser.specialty !== 'Профпатолог') {
+                            onClick={async () => {
+                              if (employee && contract) {
                                 setSelectedEmployee(employee);
-                                // Загружаем существующий осмотр, если есть
-                                const loadExistingExamination = async () => {
-                                  const cardRef = ref(rtdb, `ambulatoryCards/${employee.id}_${contract.id}`);
-                                  const cardSnapshot = await get(cardRef);
-                                  if (cardSnapshot.exists()) {
-                                    const card = cardSnapshot.val() as AmbulatoryCard;
-                                    const existingExam = card.examinations[currentUser.specialty!];
-                                    if (existingExam) {
-                                      setExaminationForm({
-                                        complaints: existingExam.complaints || '',
-                                        objectiveExamination: existingExam.objectiveExamination || '',
-                                        diagnosis: existingExam.diagnosis || '',
-                                        conclusion: existingExam.conclusion || '',
-                                        recommendations: existingExam.recommendations || '',
-                                        isFit: existingExam.isFit !== undefined ? existingExam.isFit : true,
+                                // Загружаем данные формы 052 из амбулаторной карты
+                                const contractIdNum = parseInt(contract.id, 10);
+                                if (!isNaN(contractIdNum)) {
+                                  try {
+                                    const card = await apiGetAmbulatoryCard(employee.id, contractIdNum);
+                                    let form052Data: Form052Data;
+                                    
+                                    if (card && card.personalInfo) {
+                                      // Конвертируем данные амбулаторной карты в формат формы 052
+                                      form052Data = {
+                                        passportData: {
+                                          iin: card.personalInfo.iin as string,
+                                          fullName: card.personalInfo.fullName as string,
+                                          dateOfBirth: card.personalInfo.dateOfBirth as string,
+                                          gender: card.personalInfo.gender === 'М' ? 'male' : 'female',
+                                          address: card.personalInfo.address as string,
+                                          workplace: card.personalInfo.workplace as string,
+                                          position: card.personalInfo.position as string,
+                                        },
+                                        minimalMedicalData: {
+                                          bloodGroup: card.personalInfo.bloodType as string,
+                                          rhFactor: card.personalInfo.rhFactor as string,
+                                          // Загружаем данные из anamnesis
+                                          diseaseHistory: card.anamnesis?.chronicDiseases || card.anamnesis?.pastDiseases || card.anamnesis?.heredity,
+                                          harmfulHabits: card.anamnesis?.badHabits,
+                                          allergicReactions: card.anamnesis?.allergies ? card.anamnesis.allergies.split(', ').map((name: string) => ({ name: name.trim() })) : undefined,
+                                          // Загружаем данные из vitals
+                                          anthropometricData: card.vitals ? {
+                                            height: card.vitals.height,
+                                            weight: card.vitals.weight,
+                                            bmi: card.vitals.bmi,
+                                            headCircumference: undefined,
+                                          } : undefined,
+                                        },
+                                        cardNumber: card.cardNumber || undefined,
+                                      };
+                                      
+                                      console.log('📥 Loading form 052 data from card:', {
+                                        hasAnamnesis: !!card.anamnesis,
+                                        hasVitals: !!card.vitals,
+                                        anamnesis: card.anamnesis,
+                                        vitals: card.vitals,
+                                        minimalMedicalData: form052Data.minimalMedicalData,
                                       });
+                                      
+                                      // Загружаем существующий осмотр врача, если есть
+                                      if (currentUser.specialty && card.examinations[currentUser.specialty]) {
+                                        const existingExam = card.examinations[currentUser.specialty] as DoctorExamination;
+                                        form052Data.dynamicObservation = {
+                                          treatedCase: {
+                                            diseaseAnamnesis: existingExam.complaints || '',
+                                            objectiveData: existingExam.objectiveExamination || '',
+                                            diagnosis: existingExam.diagnosis ? {
+                                              name: existingExam.diagnosis,
+                                            } : undefined,
+                                            prescribedServices: existingExam.recommendations || '',
+                                            consultations: existingExam.conclusion || '',
+                                          },
+                                        };
+                                      }
+                                    } else {
+                                      // Создаем новую форму 052 с базовыми данными
+                                      form052Data = {
+                                        passportData: {
+                                          fullName: employee.name,
+                                          dateOfBirth: employee.dob,
+                                          gender: employee.gender === 'М' ? 'male' : 'female',
+                                          workplace: contract.clientName,
+                                          position: employee.position,
+                                        },
+                                        cardNumber: `052/${contract.number}/${employee.id}`,
+                                      };
                                     }
+                                    
+                                    setForm052Data(form052Data);
+                                    setShowForm052(true);
+                                  } catch (error) {
+                                    console.error('Error loading form 052 data:', error);
+                                    // В случае ошибки все равно открываем форму с базовыми данными
+                                    const form052Data: Form052Data = {
+                                      passportData: {
+                                        fullName: employee.name,
+                                        dateOfBirth: employee.dob,
+                                        gender: employee.gender === 'М' ? 'male' : 'female',
+                                        workplace: contract.clientName,
+                                        position: employee.position,
+                                      },
+                                      cardNumber: `052/${contract.number}/${employee.id}`,
+                                    };
+                                    setForm052Data(form052Data);
+                                    setShowForm052(true);
                                   }
-                                };
-                                loadExistingExamination();
+                                }
                               }
                             }}
                           >
@@ -744,6 +1199,11 @@ const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ currentUser }) => {
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
+                                  // Закрываем форму 052 перед открытием модального окна финального заключения
+                                  if (showForm052) {
+                                    setShowForm052(false);
+                                    setSelectedEmployee(null);
+                                  }
                                   setSelectedEmployeeForConclusion(employee);
                                   setShowFinalConclusionModal(true);
                                 }}
@@ -822,11 +1282,13 @@ const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ currentUser }) => {
             </div>
           </div>
 
-          {/* Форма осмотра */}
-          {selectedEmployee && (
+          {/* Форма осмотра - теперь сразу открываем форму 052 */}
+          {selectedEmployee && !showForm052 && (
             <div className="lg:col-span-1">
               <div className="bg-white rounded-2xl border border-slate-200 p-6 sticky top-6">
-                <h3 className="text-lg font-bold text-slate-900 mb-4">Осмотр сотрудника</h3>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-bold text-slate-900">Осмотр сотрудника</h3>
+                </div>
                 <div className="mb-4">
                   <p className="font-medium text-slate-900">{selectedEmployee.name}</p>
                   <p className="text-sm text-slate-600">{selectedEmployee.position}</p>
@@ -960,7 +1422,7 @@ const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ currentUser }) => {
           employee={selectedEmployeeForConclusion}
           card={ambulatoryCards[selectedEmployeeForConclusion.id]}
           contract={contract}
-          doctorId={currentUser.doctorId}
+          doctorId={currentUser.doctorId!}
           doctorName={currentUser.companyName || 'Профпатолог'}
           onClose={() => {
             setShowFinalConclusionModal(false);
@@ -973,6 +1435,581 @@ const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ currentUser }) => {
             }
           }}
         />
+      )}
+
+      {/* Модальное окно формы 052 */}
+      {showForm052 && selectedEmployee && form052Data && contract && !showFinalConclusionModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 overflow-y-auto">
+          <div className="min-h-screen px-4 py-8">
+            <div className="max-w-6xl mx-auto bg-white rounded-2xl shadow-xl">
+              <div className="sticky top-0 bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between z-10">
+                <div>
+                  <h2 className="text-xl font-bold text-slate-900">Форма 052/у - Медицинская карта амбулаторного пациента</h2>
+                  <p className="text-sm text-slate-600 mt-1">{selectedEmployee.name} • {selectedEmployee.position}</p>
+                </div>
+                <button
+                  onClick={async () => {
+                    // Сохраняем данные формы 052 в амбулаторную карту при закрытии (та же логика, что и в onSave)
+                    if (form052Data && contract && selectedEmployee && currentUser.specialty && currentUser.doctorId) {
+                      const contractIdNum = parseInt(contract.id, 10);
+                      if (!isNaN(contractIdNum)) {
+                        try {
+                          let card = await apiGetAmbulatoryCard(selectedEmployee.id, contractIdNum);
+                          if (!card) {
+                            card = await apiCreateAmbulatoryCard({
+                              employeeId: selectedEmployee.id,
+                              contractId: contractIdNum,
+                              cardNumber: form052Data.cardNumber || `052/${contract.number}/${selectedEmployee.id}`,
+                              personalInfo: {
+                                fullName: form052Data.passportData?.fullName || selectedEmployee.name,
+                                dateOfBirth: form052Data.passportData?.dateOfBirth || selectedEmployee.dob || '',
+                                gender: form052Data.passportData?.gender === 'male' ? 'М' : 'Ж',
+                                address: form052Data.passportData?.address || '',
+                                workplace: form052Data.passportData?.workplace || contract.clientName,
+                                position: form052Data.passportData?.position || selectedEmployee.position,
+                                bloodType: form052Data.minimalMedicalData?.bloodGroup || '',
+                                rhFactor: form052Data.minimalMedicalData?.rhFactor || '',
+                              },
+                              examinations: {},
+                            });
+                          }
+                          
+                          if (card) {
+                            const updatedPersonalInfo = {
+                              ...card.personalInfo,
+                              fullName: form052Data.passportData?.fullName || card.personalInfo?.fullName,
+                              dateOfBirth: form052Data.passportData?.dateOfBirth || card.personalInfo?.dateOfBirth,
+                              gender: form052Data.passportData?.gender === 'male' ? 'М' : 'Ж',
+                              address: form052Data.passportData?.address || card.personalInfo?.address,
+                              workplace: form052Data.passportData?.workplace || card.personalInfo?.workplace,
+                              position: form052Data.passportData?.position || card.personalInfo?.position,
+                              bloodType: form052Data.minimalMedicalData?.bloodGroup || card.personalInfo?.bloodType,
+                              rhFactor: form052Data.minimalMedicalData?.rhFactor || card.personalInfo?.rhFactor,
+                            };
+                            
+                            const examinationData = form052Data.dynamicObservation?.treatedCase;
+                            if (examinationData) {
+                              const examination: DoctorExamination = {
+                                doctorId: currentUser.doctorId,
+                                doctorName: currentUser.companyName || currentUser.leaderName || '',
+                                specialty: currentUser.specialty || '',
+                                date: new Date().toISOString(),
+                                status: 'completed',
+                                complaints: examinationData.anamnesis || examinationData.diseaseAnamnesis || '',
+                                objectiveExamination: examinationData.objectiveData || '',
+                                diagnosis: typeof examinationData.diagnosis === 'string' 
+                                  ? examinationData.diagnosis 
+                                  : examinationData.diagnosis?.name || '',
+                                conclusion: examinationData.consultations || '',
+                                recommendations: examinationData.prescribedServices || '',
+                                isFit: true,
+                              };
+                              
+                              const updatedExaminations = {
+                                ...card.examinations,
+                                [currentUser.specialty]: examination,
+                              };
+                              
+                              // Подготавливаем объект для обновления со всеми полями
+                              const updateDataOnClose: any = {
+                                personalInfo: updatedPersonalInfo,
+                                examinations: updatedExaminations,
+                              };
+                              
+                              // Используем ту же логику создания anamnesis и vitals
+                              const updatedAnamnesisOnClose: any = {};
+                              if (card.anamnesis) {
+                                Object.assign(updatedAnamnesisOnClose, card.anamnesis);
+                              }
+                              if (form052Data.minimalMedicalData) {
+                                if (form052Data.minimalMedicalData.diseaseHistory) {
+                                  updatedAnamnesisOnClose.chronicDiseases = form052Data.minimalMedicalData.diseaseHistory;
+                                  updatedAnamnesisOnClose.pastDiseases = form052Data.minimalMedicalData.diseaseHistory;
+                                  updatedAnamnesisOnClose.heredity = form052Data.minimalMedicalData.diseaseHistory;
+                                }
+                                if (form052Data.minimalMedicalData.allergicReactions && form052Data.minimalMedicalData.allergicReactions.length > 0) {
+                                  updatedAnamnesisOnClose.allergies = form052Data.minimalMedicalData.allergicReactions.map((r: any) => r.name || r.code || '').filter(Boolean).join(', ');
+                                }
+                                if (form052Data.minimalMedicalData.harmfulHabits) {
+                                  updatedAnamnesisOnClose.badHabits = form052Data.minimalMedicalData.harmfulHabits;
+                                }
+                                if (card.anamnesis?.occupationalHistory) {
+                                  updatedAnamnesisOnClose.occupationalHistory = card.anamnesis.occupationalHistory;
+                                }
+                              }
+                              
+                              const updatedVitalsOnClose: any = {};
+                              if (card.vitals) {
+                                Object.assign(updatedVitalsOnClose, card.vitals);
+                              }
+                              if (form052Data.minimalMedicalData?.anthropometricData) {
+                                if (form052Data.minimalMedicalData.anthropometricData.height !== undefined) {
+                                  updatedVitalsOnClose.height = form052Data.minimalMedicalData.anthropometricData.height;
+                                }
+                                if (form052Data.minimalMedicalData.anthropometricData.weight !== undefined) {
+                                  updatedVitalsOnClose.weight = form052Data.minimalMedicalData.anthropometricData.weight;
+                                }
+                                if (form052Data.minimalMedicalData.anthropometricData.bmi !== undefined) {
+                                  updatedVitalsOnClose.bmi = form052Data.minimalMedicalData.anthropometricData.bmi;
+                                }
+                                if (!updatedVitalsOnClose.measuredAt) {
+                                  updatedVitalsOnClose.measuredAt = new Date().toISOString();
+                                }
+                              }
+                              
+                              // Фильтруем пустые значения
+                              const anamnesisKeysOnClose = Object.keys(updatedAnamnesisOnClose).filter(k => updatedAnamnesisOnClose[k] !== undefined && updatedAnamnesisOnClose[k] !== null && updatedAnamnesisOnClose[k] !== '');
+                              const vitalsKeysOnClose = Object.keys(updatedVitalsOnClose).filter(k => updatedVitalsOnClose[k] !== undefined && updatedVitalsOnClose[k] !== null && updatedVitalsOnClose[k] !== '');
+                              
+                              if (anamnesisKeysOnClose.length > 0) {
+                                const filteredAnamnesis: any = {};
+                                anamnesisKeysOnClose.forEach(k => {
+                                  filteredAnamnesis[k] = updatedAnamnesisOnClose[k];
+                                });
+                                updateDataOnClose.anamnesis = filteredAnamnesis;
+                              }
+                              
+                              if (vitalsKeysOnClose.length > 0) {
+                                const filteredVitals: any = {};
+                                vitalsKeysOnClose.forEach(k => {
+                                  filteredVitals[k] = updatedVitalsOnClose[k];
+                                });
+                                updateDataOnClose.vitals = filteredVitals;
+                              }
+                              
+                              console.log('💾 onClose - Updating card with data:', updateDataOnClose);
+                              await apiUpdateAmbulatoryCard(card.id, updateDataOnClose);
+                              
+                              // Обновляем маршрутный лист
+                              if (routeSheet) {
+                                const updatedEmployees = routeSheet.employees.map(emp =>
+                                  emp.employeeId === selectedEmployee.id
+                                    ? { ...emp, status: 'examined' as const, examinationDate: new Date().toISOString() }
+                                    : emp
+                                );
+                                try {
+                                  const routeSheets = await apiListRouteSheets({ 
+                                    doctorId: currentUser.doctorId, 
+                                    contractId: contractIdNum 
+                                  });
+                                  if (routeSheets.length > 0) {
+                                    await apiUpdateRouteSheet(routeSheets[0].id, {
+                                      employees: updatedEmployees,
+                                    });
+                                  }
+                                } catch (error) {
+                                  console.error('Error updating route sheet:', error);
+                                }
+                                setRouteSheet({
+                                  ...routeSheet,
+                                  employees: updatedEmployees,
+                                });
+                              }
+                            } else {
+                              // Подготавливаем объект для обновления без examination
+                              const updateDataNoExam: any = {
+                                personalInfo: updatedPersonalInfo,
+                              };
+                              
+                              // Используем ту же логику создания anamnesis и vitals
+                              const updatedAnamnesisNoExam: any = {};
+                              if (card.anamnesis) {
+                                Object.assign(updatedAnamnesisNoExam, card.anamnesis);
+                              }
+                              if (form052Data.minimalMedicalData) {
+                                if (form052Data.minimalMedicalData.diseaseHistory) {
+                                  updatedAnamnesisNoExam.chronicDiseases = form052Data.minimalMedicalData.diseaseHistory;
+                                  updatedAnamnesisNoExam.pastDiseases = form052Data.minimalMedicalData.diseaseHistory;
+                                  updatedAnamnesisNoExam.heredity = form052Data.minimalMedicalData.diseaseHistory;
+                                }
+                                if (form052Data.minimalMedicalData.allergicReactions && form052Data.minimalMedicalData.allergicReactions.length > 0) {
+                                  updatedAnamnesisNoExam.allergies = form052Data.minimalMedicalData.allergicReactions.map((r: any) => r.name || r.code || '').filter(Boolean).join(', ');
+                                }
+                                if (form052Data.minimalMedicalData.harmfulHabits) {
+                                  updatedAnamnesisNoExam.badHabits = form052Data.minimalMedicalData.harmfulHabits;
+                                }
+                                if (card.anamnesis?.occupationalHistory) {
+                                  updatedAnamnesisNoExam.occupationalHistory = card.anamnesis.occupationalHistory;
+                                }
+                              }
+                              
+                              const updatedVitalsNoExam: any = {};
+                              if (card.vitals) {
+                                Object.assign(updatedVitalsNoExam, card.vitals);
+                              }
+                              if (form052Data.minimalMedicalData?.anthropometricData) {
+                                if (form052Data.minimalMedicalData.anthropometricData.height !== undefined) {
+                                  updatedVitalsNoExam.height = form052Data.minimalMedicalData.anthropometricData.height;
+                                }
+                                if (form052Data.minimalMedicalData.anthropometricData.weight !== undefined) {
+                                  updatedVitalsNoExam.weight = form052Data.minimalMedicalData.anthropometricData.weight;
+                                }
+                                if (form052Data.minimalMedicalData.anthropometricData.bmi !== undefined) {
+                                  updatedVitalsNoExam.bmi = form052Data.minimalMedicalData.anthropometricData.bmi;
+                                }
+                                if (!updatedVitalsNoExam.measuredAt) {
+                                  updatedVitalsNoExam.measuredAt = new Date().toISOString();
+                                }
+                              }
+                              
+                              updateDataNoExam.anamnesis = updatedAnamnesisNoExam;
+                              updateDataNoExam.vitals = updatedVitalsNoExam;
+                              
+                              console.log('💾 onClose (no exam) - Updating card with data:', updateDataNoExam);
+                              await apiUpdateAmbulatoryCard(card.id, updateDataNoExam);
+                            }
+                          }
+                        } catch (error) {
+                          console.error('Error saving form 052 data:', error);
+                        }
+                      }
+                    }
+                    setShowForm052(false);
+                    setSelectedEmployee(null);
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+                >
+                  Закрыть
+                </button>
+              </div>
+              <div className="p-6">
+                <Form052Editor
+                  initialData={form052Data}
+                  mode="edit"
+                  onSave={async (data) => {
+                    console.log('💾 Form 052 onSave called with data:', data);
+                    console.log('💾 Form 052 minimalMedicalData:', data.minimalMedicalData);
+                    console.log('💾 Form 052 diseaseHistory:', data.minimalMedicalData?.diseaseHistory);
+                    console.log('💾 Form 052 harmfulHabits:', data.minimalMedicalData?.harmfulHabits);
+                    console.log('💾 Form 052 allergicReactions:', data.minimalMedicalData?.allergicReactions);
+                    console.log('💾 Form 052 anthropometricData:', data.minimalMedicalData?.anthropometricData);
+                    console.log('💾 Form 052 dynamicObservation:', data.dynamicObservation);
+                    console.log('💾 Form 052 treatedCase:', data.dynamicObservation?.treatedCase);
+                    setForm052Data(data);
+                    // Сохраняем данные формы 052 в амбулаторную карту
+                    if (contract && selectedEmployee && currentUser.specialty && currentUser.doctorId) {
+                      const contractIdNum = parseInt(contract.id, 10);
+                      if (!isNaN(contractIdNum)) {
+                        try {
+                          // Загружаем или создаем амбулаторную карту
+                          let card = await apiGetAmbulatoryCard(selectedEmployee.id, contractIdNum);
+                          
+                          if (!card) {
+                            // Создаем новую карту
+                            card = await apiCreateAmbulatoryCard({
+                              employeeId: selectedEmployee.id,
+                              contractId: contractIdNum,
+                              cardNumber: data.cardNumber || `052/${contract.number}/${selectedEmployee.id}`,
+                              personalInfo: {
+                                fullName: data.passportData?.fullName || selectedEmployee.name,
+                                dateOfBirth: data.passportData?.dateOfBirth || selectedEmployee.dob,
+                                gender: data.passportData?.gender === 'male' ? 'М' : 'Ж',
+                                address: data.passportData?.address || '',
+                                workplace: data.passportData?.workplace || contract.clientName,
+                                position: data.passportData?.position || selectedEmployee.position,
+                                bloodType: data.minimalMedicalData?.bloodGroup || '',
+                                rhFactor: data.minimalMedicalData?.rhFactor || '',
+                              },
+                              examinations: {},
+                            });
+                          }
+                          
+                          if (card) {
+                            // Обновляем персональные данные
+                            const updatedPersonalInfo = {
+                              ...card.personalInfo,
+                              fullName: data.passportData?.fullName || card.personalInfo?.fullName,
+                              dateOfBirth: data.passportData?.dateOfBirth || card.personalInfo?.dateOfBirth,
+                              gender: data.passportData?.gender === 'male' ? 'М' : 'Ж',
+                              address: data.passportData?.address || card.personalInfo?.address,
+                              workplace: data.passportData?.workplace || card.personalInfo?.workplace,
+                              position: data.passportData?.position || card.personalInfo?.position,
+                              bloodType: data.minimalMedicalData?.bloodGroup || card.personalInfo?.bloodType,
+                              rhFactor: data.minimalMedicalData?.rhFactor || card.personalInfo?.rhFactor,
+                            };
+                            
+                            // Извлекаем и обновляем анамнез из формы 052
+                            const updatedAnamnesis: any = {};
+                            if (card.anamnesis) {
+                              Object.assign(updatedAnamnesis, card.anamnesis);
+                            }
+                            if (data.minimalMedicalData) {
+                              if (data.minimalMedicalData.diseaseHistory) {
+                                updatedAnamnesis.chronicDiseases = data.minimalMedicalData.diseaseHistory;
+                                updatedAnamnesis.pastDiseases = data.minimalMedicalData.diseaseHistory;
+                                updatedAnamnesis.heredity = data.minimalMedicalData.diseaseHistory;
+                              }
+                              if (data.minimalMedicalData.allergicReactions && data.minimalMedicalData.allergicReactions.length > 0) {
+                                updatedAnamnesis.allergies = data.minimalMedicalData.allergicReactions.map((r: any) => r.name || r.code || '').filter(Boolean).join(', ');
+                              }
+                              if (data.minimalMedicalData.harmfulHabits) {
+                                updatedAnamnesis.badHabits = data.minimalMedicalData.harmfulHabits;
+                              }
+                              if (card.anamnesis?.occupationalHistory) {
+                                updatedAnamnesis.occupationalHistory = card.anamnesis.occupationalHistory;
+                              }
+                            }
+                            
+                            // Извлекаем и обновляем витальные показатели из формы 052
+                            const updatedVitals: any = {};
+                            if (card.vitals) {
+                              Object.assign(updatedVitals, card.vitals);
+                            }
+                            if (data.minimalMedicalData?.anthropometricData) {
+                              if (data.minimalMedicalData.anthropometricData.height !== undefined) {
+                                updatedVitals.height = data.minimalMedicalData.anthropometricData.height;
+                              }
+                              if (data.minimalMedicalData.anthropometricData.weight !== undefined) {
+                                updatedVitals.weight = data.minimalMedicalData.anthropometricData.weight;
+                              }
+                              if (data.minimalMedicalData.anthropometricData.bmi !== undefined) {
+                                updatedVitals.bmi = data.minimalMedicalData.anthropometricData.bmi;
+                              }
+                              if (!updatedVitals.measuredAt) {
+                                updatedVitals.measuredAt = new Date().toISOString();
+                              }
+                            }
+                            
+                            console.log('📊 onSave - Prepared data:', {
+                              hasMinimalMedicalData: !!data.minimalMedicalData,
+                              minimalMedicalData: data.minimalMedicalData,
+                              updatedAnamnesis,
+                              updatedVitals,
+                              anamnesisKeys: Object.keys(updatedAnamnesis),
+                              vitalsKeys: Object.keys(updatedVitals),
+                              cardAnamnesis: card.anamnesis,
+                              cardVitals: card.vitals,
+                            });
+                            
+                            // Извлекаем данные осмотра из формы 052 (раздел "Динамическое наблюдение")
+                            const examinationData = data.dynamicObservation?.treatedCase;
+                            
+                            console.log('🔍 onSave - Extracting examination data:', {
+                              hasDynamicObservation: !!data.dynamicObservation,
+                              hasTreatedCase: !!examinationData,
+                              examinationData: examinationData,
+                              fullData: data,
+                            });
+                            
+                            // Сохраняем осмотр только если есть данные в treatedCase
+                            if (examinationData && (
+                              examinationData.anamnesis || 
+                              examinationData.diseaseAnamnesis || 
+                              examinationData.objectiveData || 
+                              examinationData.diagnosis ||
+                              examinationData.consultations ||
+                              examinationData.prescribedServices
+                            )) {
+                              const examination: DoctorExamination = {
+                                doctorId: currentUser.doctorId,
+                                doctorName: currentUser.companyName || currentUser.leaderName || '',
+                                specialty: currentUser.specialty || '',
+                                date: new Date().toISOString(),
+                                status: 'completed',
+                                complaints: examinationData.anamnesis || examinationData.diseaseAnamnesis || '',
+                                objectiveExamination: examinationData.objectiveData || '',
+                                diagnosis: typeof examinationData.diagnosis === 'string' 
+                                  ? examinationData.diagnosis 
+                                  : examinationData.diagnosis?.name || '',
+                                conclusion: examinationData.consultations || '',
+                                recommendations: examinationData.prescribedServices || '',
+                                isFit: true, // По умолчанию годен
+                              };
+                              
+                              console.log('💾 onSave - Saving examination data:', {
+                                specialty: currentUser.specialty,
+                                examination: examination,
+                                examinationData: examinationData
+                              });
+                              
+                              // Обновляем осмотры врачей
+                              const updatedExaminations = {
+                                ...card.examinations,
+                                [currentUser.specialty]: examination,
+                              };
+                              
+                              console.log('💾 onSave - Updating ambulatory card:', {
+                                cardId: card.id,
+                                specialty: currentUser.specialty,
+                                updatedExaminations: updatedExaminations
+                              });
+                              
+                              // Подготавливаем объект для обновления со всеми полями
+                              const updateData: any = {
+                                personalInfo: updatedPersonalInfo,
+                                examinations: updatedExaminations,
+                              };
+                              
+                              // Добавляем anamnesis и vitals только если есть данные
+                              const anamnesisKeys = Object.keys(updatedAnamnesis).filter(k => {
+                                const val = updatedAnamnesis[k];
+                                return val !== undefined && val !== null && val !== '';
+                              });
+                              const vitalsKeys = Object.keys(updatedVitals).filter(k => {
+                                const val = updatedVitals[k];
+                                return val !== undefined && val !== null && val !== '';
+                              });
+                              
+                              console.log('🔍 onSave - Filtering data:', {
+                                anamnesisKeys,
+                                vitalsKeys,
+                                anamnesisValues: anamnesisKeys.map(k => ({ key: k, value: updatedAnamnesis[k] })),
+                                vitalsValues: vitalsKeys.map(k => ({ key: k, value: updatedVitals[k] })),
+                              });
+                              
+                              // Всегда добавляем anamnesis и vitals если есть хотя бы одно поле
+                              if (anamnesisKeys.length > 0) {
+                                const filteredAnamnesis: any = {};
+                                anamnesisKeys.forEach(k => {
+                                  filteredAnamnesis[k] = updatedAnamnesis[k];
+                                });
+                                updateData.anamnesis = filteredAnamnesis;
+                              } else if (data.minimalMedicalData && (data.minimalMedicalData.diseaseHistory || data.minimalMedicalData.harmfulHabits || data.minimalMedicalData.allergicReactions)) {
+                                // Если данные были в форме, но не попали в anamnesis, все равно сохраняем
+                                console.warn('⚠️ onSave - Anamnesis data exists in form but not extracted properly');
+                                updateData.anamnesis = updatedAnamnesis;
+                              }
+                              
+                              if (vitalsKeys.length > 0) {
+                                const filteredVitals: any = {};
+                                vitalsKeys.forEach(k => {
+                                  filteredVitals[k] = updatedVitals[k];
+                                });
+                                updateData.vitals = filteredVitals;
+                              } else if (data.minimalMedicalData?.anthropometricData) {
+                                // Если данные были в форме, но не попали в vitals, все равно сохраняем
+                                console.warn('⚠️ onSave - Vitals data exists in form but not extracted properly');
+                                updateData.vitals = updatedVitals;
+                              }
+                              
+                              console.log('💾 onSave - Final update data:', {
+                                keys: Object.keys(updateData),
+                                anamnesis: updateData.anamnesis,
+                                vitals: updateData.vitals,
+                                anamnesisKeys,
+                                vitalsKeys,
+                                willSendAnamnesis: !!updateData.anamnesis,
+                                willSendVitals: !!updateData.vitals,
+                              });
+                              
+                              await apiUpdateAmbulatoryCard(card.id, updateData);
+                              
+                              console.log('✅ onSave - Ambulatory card updated successfully');
+                              
+                              // Обновляем маршрутный лист
+                              if (routeSheet) {
+                                const updatedEmployees = routeSheet.employees.map(emp =>
+                                  emp.employeeId === selectedEmployee.id
+                                    ? { ...emp, status: 'examined' as const, examinationDate: new Date().toISOString() }
+                                    : emp
+                                );
+                                try {
+                                  const routeSheets = await apiListRouteSheets({ 
+                                    doctorId: currentUser.doctorId, 
+                                    contractId: contractIdNum 
+                                  });
+                                  if (routeSheets.length > 0) {
+                                    await apiUpdateRouteSheet(routeSheets[0].id, {
+                                      employees: updatedEmployees,
+                                    });
+                                    console.log('✅ onSave - Route sheet updated successfully');
+                                  }
+                                } catch (error) {
+                                  console.error('❌ onSave - Error updating route sheet:', error);
+                                }
+                                setRouteSheet({
+                                  ...routeSheet,
+                                  employees: updatedEmployees,
+                                });
+                              }
+                              
+                              // Показываем уведомление об успешном сохранении
+                              alert('Данные осмотра успешно сохранены!');
+                            } else {
+                              console.warn('⚠️ onSave - No examination data found in treatedCase, saving personalInfo, anamnesis and vitals');
+                              const updateData: any = {
+                                personalInfo: updatedPersonalInfo,
+                              };
+                              
+                              // Добавляем anamnesis и vitals только если есть данные
+                              const anamnesisKeys = Object.keys(updatedAnamnesis).filter(k => updatedAnamnesis[k] !== undefined && updatedAnamnesis[k] !== null && updatedAnamnesis[k] !== '');
+                              const vitalsKeys = Object.keys(updatedVitals).filter(k => updatedVitals[k] !== undefined && updatedVitals[k] !== null && updatedVitals[k] !== '');
+                              
+                              if (anamnesisKeys.length > 0) {
+                                const filteredAnamnesis: any = {};
+                                anamnesisKeys.forEach(k => {
+                                  filteredAnamnesis[k] = updatedAnamnesis[k];
+                                });
+                                updateData.anamnesis = filteredAnamnesis;
+                              }
+                              
+                              if (vitalsKeys.length > 0) {
+                                const filteredVitals: any = {};
+                                vitalsKeys.forEach(k => {
+                                  filteredVitals[k] = updatedVitals[k];
+                                });
+                                updateData.vitals = filteredVitals;
+                              }
+                              
+                              console.log('💾 onSave (no exam) - Updating card with data:', {
+                                keys: Object.keys(updateData),
+                                anamnesis: updateData.anamnesis,
+                                vitals: updateData.vitals,
+                                anamnesisKeys,
+                                vitalsKeys,
+                              });
+                              
+                              await apiUpdateAmbulatoryCard(card.id, updateData);
+                            }
+                            
+                            // Обновляем маршрутный лист
+                            if (routeSheet) {
+                              const updatedEmployees = routeSheet.employees.map(emp =>
+                                emp.employeeId === selectedEmployee.id
+                                  ? { ...emp, status: 'examined' as const, examinationDate: new Date().toISOString() }
+                                  : emp
+                              );
+                              
+                              try {
+                                const routeSheets = await apiListRouteSheets({ 
+                                  doctorId: currentUser.doctorId, 
+                                  contractId: contractIdNum 
+                                });
+                                if (routeSheets.length > 0) {
+                                  await apiUpdateRouteSheet(routeSheets[0].id, {
+                                    employees: updatedEmployees,
+                                  });
+                                }
+                              } catch (error) {
+                                console.error('Error updating route sheet:', error);
+                              }
+                              
+                              setRouteSheet({
+                                ...routeSheet,
+                                employees: updatedEmployees,
+                              });
+                            }
+                            
+                            // Перезагружаем амбулаторные карты для профпатолога
+                            if (currentUser.specialty === 'Профпатолог') {
+                              await loadAmbulatoryCards(contract.id, employees);
+                            }
+                            
+                            // Закрываем форму
+                            setShowForm052(false);
+                            setSelectedEmployee(null);
+                          }
+                        } catch (error) {
+                          console.error('Error saving form 052 data:', error);
+                        }
+                      }
+                    }
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

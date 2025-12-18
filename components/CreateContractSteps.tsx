@@ -10,7 +10,6 @@ interface StepOneProps {
   invitePhone: string;
   setInvitePhone: (phone: string) => void;
   isSearching: boolean;
-  onSearch: () => void;
   onNext: () => void;
   currentUser: UserProfile | null;
 }
@@ -22,7 +21,6 @@ export const StepOne: React.FC<StepOneProps> = ({
   invitePhone,
   setInvitePhone,
   isSearching,
-  onSearch,
   onNext,
   currentUser
 }) => (
@@ -31,25 +29,40 @@ export const StepOne: React.FC<StepOneProps> = ({
       <label className="block text-xs font-bold uppercase text-slate-400 mb-2">
         Найти контрагента ({currentUser?.role === 'organization' ? 'Клинику' : 'Организацию'})
       </label>
-      <div className="flex gap-2">
+      <div className="relative">
         <input 
           value={searchBin}
           onChange={(e) => setSearchBin(e.target.value.replace(/\D/g, '').slice(0, 12))}
           placeholder="Введите БИН (12 цифр)"
-          className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-mono"
+          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-mono pr-12"
           autoFocus
         />
-        <button 
-          onClick={onSearch}
-          disabled={isSearching || searchBin.length < 12}
-          className="px-4 bg-slate-900 text-white rounded-xl hover:bg-black disabled:opacity-50"
-        >
-          {isSearching ? <LoaderIcon className="w-4 h-4 animate-spin"/> : 'Поиск'}
-        </button>
+        {isSearching && searchBin.length === 12 && (
+          <div className="absolute right-4 top-1/2 transform -translate-y-1/2">
+            <LoaderIcon className="w-5 h-5 animate-spin text-blue-600" />
+          </div>
+        )}
+        {!isSearching && searchBin.length === 12 && foundCounterparty && (
+          <div className="absolute right-4 top-1/2 transform -translate-y-1/2">
+            <CheckShieldIcon className="w-5 h-5 text-green-600" />
+          </div>
+        )}
       </div>
+      {searchBin.length > 0 && searchBin.length < 12 && (
+        <p className="text-xs text-slate-500 mt-1">
+          Введите {12 - searchBin.length} {12 - searchBin.length === 1 ? 'цифру' : 'цифр'} для автоматического поиска
+        </p>
+      )}
     </div>
 
-    {foundCounterparty ? (
+    {isSearching && searchBin.length === 12 && (
+      <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl flex items-center gap-3">
+        <LoaderIcon className="w-5 h-5 animate-spin text-blue-600" />
+        <p className="text-sm text-blue-800 font-medium">Поиск организации...</p>
+      </div>
+    )}
+
+    {foundCounterparty && !isSearching ? (
       <div className="p-4 bg-green-50 border border-green-200 rounded-xl flex items-center gap-3">
         <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center text-green-600">
           <CheckShieldIcon className="w-5 h-5" />
@@ -62,7 +75,7 @@ export const StepOne: React.FC<StepOneProps> = ({
           </div>
         </div>
       </div>
-    ) : searchBin.length === 12 && !isSearching && (
+    ) : searchBin.length === 12 && !isSearching && !foundCounterparty ? (
       <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl">
         <p className="text-sm text-amber-800 font-medium mb-2">Организация не найдена в MedFlow.</p>
         <p className="text-xs text-amber-600 mb-3">
@@ -75,7 +88,7 @@ export const StepOne: React.FC<StepOneProps> = ({
           className="w-full px-3 py-2 bg-white border border-amber-200 rounded-lg text-sm"
         />
       </div>
-    )}
+    ) : null}
 
     <div className="pt-4 flex justify-end">
       <button 

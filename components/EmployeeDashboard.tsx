@@ -1,9 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { UserProfile, Contract, AmbulatoryCard, Doctor, DoctorRouteSheet, Employee, DoctorExamination } from '../types';
-import { rtdb, ref, get, onValue, set } from '../services/firebase';
-import { LoaderIcon, UserMdIcon, FileTextIcon, CheckShieldIcon, CalendarIcon, ClockIcon, LogoutIcon } from './Icons';
+import { LoaderIcon, UserMdIcon, FileTextIcon, CheckShieldIcon, CalendarIcon, ClockIcon, LogoutIcon, AlertCircleIcon } from './Icons';
 import { FACTOR_RULES, FactorRule } from '../factorRules';
 import AmbulatoryCardView from './AmbulatoryCardView';
+import {
+  apiListContractsByBin,
+  apiGetContract,
+  apiListRouteSheets,
+  apiGetAmbulatoryCard,
+  apiCreateAmbulatoryCard,
+  apiListDoctors,
+  apiGetUserByBin,
+  ApiRouteSheet,
+  ApiAmbulatoryCard,
+  ApiDoctor,
+} from '../services/api';
 
 // --- RESEARCH PARSING UTILITIES ---
 /**
@@ -291,112 +302,234 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    console.log('EmployeeDashboard: Loading data for user:', {
+      contractId: currentUser.contractId,
+      employeeId: currentUser.employeeId,
+      bin: currentUser.bin,
+      phone: currentUser.phone,
+    });
+    
     if (!currentUser.contractId || !currentUser.employeeId) {
+      console.warn('EmployeeDashboard: Missing required fields:', {
+        hasContractId: !!currentUser.contractId,
+        hasEmployeeId: !!currentUser.employeeId,
+        hasBin: !!currentUser.bin,
+      });
       setIsLoading(false);
       return;
+    }
+    
+    // Если нет bin, пытаемся получить его из договора
+    if (!currentUser.bin) {
+      console.warn('EmployeeDashboard: No bin in user profile, will try to get from contract');
     }
 
     const loadData = async () => {
       try {
-        // Загружаем договор
-        const contractRef = ref(rtdb, `contracts/${currentUser.contractId}`);
-        const contractSnapshot = await get(contractRef);
-        if (contractSnapshot.exists()) {
-          const contractData = { id: currentUser.contractId, ...contractSnapshot.val() } as Contract;
-          setContract(contractData);
+        const contractIdNum = parseInt(currentUser.contractId, 10);
+        if (isNaN(contractIdNum)) {
+          console.error('Invalid contractId:', currentUser.contractId);
+          setIsLoading(false);
+          return;
+        }
 
-          // Находим данные сотрудника
-          const emp = contractData.employees?.find(e => e.id === currentUser.employeeId);
-          if (emp) {
-            setEmployee(emp);
+        // Загружаем договор через API
+        let apiContract: ApiContract | undefined;
+        
+        // Сначала пытаемся получить договор напрямую по ID (если есть contractId)
+        if (contractIdNum > 0) {
+          try {
+            apiContract = await apiGetContract(contractIdNum);
+            console.log('✅ Contract loaded by ID:', apiContract.id);
             
-            // Загружаем амбулаторную карту и выполняем миграцию если нужно
-            const cardRef = ref(rtdb, `ambulatoryCards/${currentUser.employeeId}_${currentUser.contractId}`);
-            const cardSnapshot = await get(cardRef);
-            if (cardSnapshot.exists()) {
-              let cardData = { ...cardSnapshot.val() } as AmbulatoryCard;
-              
-              // Миграция: если нет personalInfo, создаем его из данных сотрудника
-              if (!cardData.personalInfo) {
-                cardData.personalInfo = {
-                  fullName: emp.name,
-                  dateOfBirth: emp.dob || '',
-                  gender: emp.gender,
-                  phone: emp.phone,
-                  workplace: contractData.clientName,
-                  position: emp.position,
-                  harmfulFactors: emp.harmfulFactor || '',
-                };
-                
-                // Сохраняем обновленную карту
-                await set(cardRef, cardData);
-              }
-              
-              setAmbulatoryCard(cardData);
+            // Если у пользователя нет bin, обновляем его из договора
+            if (!currentUser.bin && apiContract.clientBin) {
+              console.log('📝 Updating user bin from contract:', apiContract.clientBin);
+              // Обновляем bin пользователя (можно вызвать apiCreateUser для обновления)
+              // Но это не критично для работы, просто логируем
             }
-            
-            // Подписываемся на обновления амбулаторной карты
-            const unsubscribe = onValue(cardRef, (snapshot) => {
-              if (snapshot.exists()) {
-                setAmbulatoryCard({ ...snapshot.val() } as AmbulatoryCard);
-              }
-            });
+          } catch (error) {
+            console.warn('Failed to load contract by ID, trying by bin:', error);
           }
-
-          // Загружаем врачей клиники
-          // Ищем клинику по BIN в users, чтобы получить её uid
-          if (contractData.clinicBin) {
-            try {
-              const usersRef = ref(rtdb, 'users');
-              const usersSnapshot = await get(usersRef);
-              if (usersSnapshot.exists()) {
-                const users = usersSnapshot.val();
-                const clinicUser = Object.values(users).find((u: any) => 
-                  u.role === 'clinic' && u.bin === contractData.clinicBin
-                ) as any;
-              
-                if (clinicUser && clinicUser.uid) {
-                  const clinicRef = ref(rtdb, `clinics/${clinicUser.uid}/doctors`);
-                  const doctorsSnapshot = await get(clinicRef);
-                  if (doctorsSnapshot.exists()) {
-                    const doctorsData = doctorsSnapshot.val();
-                    const doctorsList = Object.entries(doctorsData).map(([id, doctor]: [string, any]) => ({
-                      id,
-                      ...doctor
-                    })) as Doctor[];
-                    setDoctors(doctorsList);
-                  }
-                }
-              }
-            } catch (error) {
-              console.error('Error loading doctors:', error);
+        }
+        
+        // Если не получилось по ID, пытаемся по bin
+        if (!apiContract && currentUser.bin) {
+          try {
+            const contracts = await apiListContractsByBin(currentUser.bin);
+            apiContract = contracts.find(c => String(c.id) === currentUser.contractId);
+            if (apiContract) {
+              console.log('✅ Contract found by bin:', apiContract.id);
             }
+          } catch (error) {
+            console.error('Error loading contracts by bin:', error);
+          }
+        }
+        
+        if (!apiContract) {
+          console.error('❌ Contract not found:', {
+            contractId: currentUser.contractId,
+            contractIdNum: contractIdNum,
+            bin: currentUser.bin,
+            employeeId: currentUser.employeeId,
+          });
+          setIsLoading(false);
+          return;
+        }
+        
+        console.log('Found contract:', apiContract.id, apiContract.number);
+
+        // Конвертируем ApiContract в Contract
+        const contractData: Contract = {
+          id: String(apiContract.id),
+          number: apiContract.number,
+          clientName: apiContract.clientName,
+          clientBin: apiContract.clientBin,
+          clientSigned: apiContract.clientSigned,
+          clinicName: apiContract.clinicName,
+          clinicBin: apiContract.clinicBin,
+          clinicSigned: apiContract.clinicSigned,
+          date: apiContract.date,
+          status: apiContract.status as any,
+          price: apiContract.price,
+          plannedHeadcount: apiContract.plannedHeadcount,
+          employees: apiContract.employees || [],
+          calendarPlan: apiContract.calendarPlan,
+          documents: apiContract.documents || [],
+        };
+        setContract(contractData);
+
+        // Находим данные сотрудника
+        const emp = contractData.employees?.find(e => e.id === currentUser.employeeId);
+        if (!emp) {
+          console.error('Employee not found in contract:', {
+            employeeId: currentUser.employeeId,
+            contractId: currentUser.contractId,
+            employeesInContract: contractData.employees?.length || 0,
+            employeeIds: contractData.employees?.map(e => e.id) || [],
+          });
+          setIsLoading(false);
+          return;
+        }
+        
+        console.log('Found employee:', emp.name);
+        setEmployee(emp);
+        
+        // Загружаем амбулаторную карту, если её нет - создаем
+        let apiCard = await apiGetAmbulatoryCard(currentUser.employeeId, contractIdNum);
+        if (!apiCard) {
+          // Создаем амбулаторную карту автоматически, если её нет
+          console.log('📋 Creating ambulatory card for employee:', emp.name);
+          try {
+            apiCard = await apiCreateAmbulatoryCard({
+              employeeId: currentUser.employeeId,
+              contractId: contractIdNum,
+              cardNumber: `052/${contractData.number}/${currentUser.employeeId}`,
+              personalInfo: {
+                fullName: emp.name,
+                dateOfBirth: emp.dob || '',
+                gender: emp.gender || 'М',
+                phone: emp.phone || currentUser.phone,
+                address: emp.address || '',
+                workplace: contractData.clientName,
+                position: emp.position,
+                harmfulFactors: emp.harmfulFactor || '',
+              },
+              examinations: {},
+            });
+            console.log('✅ Ambulatory card created successfully');
+          } catch (error) {
+            console.error('❌ Error creating ambulatory card:', error);
+          }
+        }
+        
+        if (apiCard) {
+          console.log('📋 EmployeeDashboard - Loaded card:', {
+            id: apiCard.id,
+            employeeId: apiCard.employeeId,
+            contractId: apiCard.contractId,
+            hasPersonalInfo: !!apiCard.personalInfo,
+            hasAnamnesis: !!apiCard.anamnesis,
+            hasVitals: !!apiCard.vitals,
+            hasLabTests: !!apiCard.labTests,
+            hasExaminations: !!apiCard.examinations,
+            examinationsCount: apiCard.examinations ? Object.keys(apiCard.examinations).length : 0,
+            hasFinalConclusion: !!apiCard.finalConclusion,
+            updatedAt: apiCard.updatedAt,
+          });
+          
+          // Конвертируем ApiAmbulatoryCard в AmbulatoryCard
+          const cardData: AmbulatoryCard = {
+            employeeId: apiCard.employeeId,
+            contractId: String(apiCard.contractId),
+            cardNumber: apiCard.cardNumber,
+            personalInfo: apiCard.personalInfo as any,
+            anamnesis: apiCard.anamnesis as any,
+            vitals: apiCard.vitals as any,
+            labTests: apiCard.labTests as any,
+            examinations: apiCard.examinations as any || {},
+            finalConclusion: apiCard.finalConclusion as any,
+            createdAt: apiCard.createdAt,
+            updatedAt: apiCard.updatedAt,
+          };
+          
+          console.log('📋 EmployeeDashboard - Converted card data:', {
+            hasAnamnesis: !!cardData.anamnesis,
+            hasVitals: !!cardData.vitals,
+            examinationsKeys: Object.keys(cardData.examinations || {}),
+          });
+          
+          setAmbulatoryCard(cardData);
+        } else {
+          console.warn('⚠️ EmployeeDashboard - No card found for employee:', currentUser.employeeId);
+        }
+
+        // Загружаем врачей клиники
+        if (contractData.clinicBin) {
+          try {
+            // Ищем клинику по BIN через API users
+            const clinicUser = await apiGetUserByBin(contractData.clinicBin);
+            
+            if (clinicUser && clinicUser.role === 'clinic' && clinicUser.uid) {
+              const apiDoctors = await apiListDoctors(clinicUser.uid);
+              const doctorsList: Doctor[] = apiDoctors.map((d: ApiDoctor) => ({
+                id: String(d.id),
+                name: d.name,
+                specialty: d.specialty,
+                phone: d.phone,
+                isChairman: d.isChairman,
+              }));
+              setDoctors(doctorsList);
+            }
+          } catch (error) {
+            console.error('Error loading doctors:', error);
           }
         }
 
         // Загружаем маршрутные листы для этого договора
         try {
-          const routeSheetsRef = ref(rtdb, 'routeSheets');
-          const routeSheetsSnapshot = await get(routeSheetsRef);
-          if (routeSheetsSnapshot.exists()) {
-            const allRouteSheets = routeSheetsSnapshot.val();
-            // Фильтруем маршрутные листы для этого договора, которые содержат этого сотрудника
-            const relevantSheets: DoctorRouteSheet[] = [];
-            Object.entries(allRouteSheets).forEach(([key, sheet]: [string, any]) => {
-              const routeSheet = { ...sheet } as DoctorRouteSheet;
-              // Проверяем, что это маршрутный лист для нашего договора
-              if (routeSheet.contractId === currentUser.contractId) {
-                // Проверяем, есть ли этот сотрудник в маршрутном листе
-                const hasEmployee = routeSheet.employees?.some(
-                  (emp: any) => emp.employeeId === currentUser.employeeId
-                );
-                if (hasEmployee) {
-                  relevantSheets.push(routeSheet);
-                }
-              }
-            });
-            setRouteSheets(relevantSheets);
+          const apiRouteSheets = await apiListRouteSheets({ contractId: contractIdNum });
+          
+          // Фильтруем маршрутные листы, которые содержат этого сотрудника
+          const relevantSheets: DoctorRouteSheet[] = [];
+          for (const apiSheet of apiRouteSheets) {
+            const hasEmployee = apiSheet.employees.some(
+              (emp: any) => emp.employeeId === currentUser.employeeId
+            );
+            if (hasEmployee) {
+              const routeSheet: DoctorRouteSheet = {
+                id: String(apiSheet.id),
+                doctorId: apiSheet.doctorId,
+                contractId: String(apiSheet.contractId),
+                specialty: apiSheet.specialty,
+                virtualDoctor: apiSheet.virtualDoctor,
+                employees: apiSheet.employees,
+                createdAt: apiSheet.createdAt,
+              };
+              relevantSheets.push(routeSheet);
+            }
           }
+          setRouteSheets(relevantSheets);
         } catch (error) {
           console.error('Error loading route sheets:', error);
         }
@@ -408,7 +541,26 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
     };
 
     loadData();
-  }, [currentUser.contractId, currentUser.employeeId]);
+    
+    // Периодическое обновление данных каждые 30 секунд
+    const intervalId = setInterval(() => {
+      console.log('🔄 Auto-refreshing employee data...');
+      loadData();
+    }, 30000);
+    
+    // Обновление данных при фокусе на окне
+    const handleFocus = () => {
+      console.log('🔄 Window focused, refreshing employee data...');
+      loadData();
+    };
+    
+    window.addEventListener('focus', handleFocus);
+    
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [currentUser.contractId, currentUser.employeeId, currentUser.bin]);
 
   if (isLoading) {
     return (
@@ -421,8 +573,32 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
   if (!contract || !employee) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-slate-50">
-        <div className="text-center">
-          <p className="text-slate-600">Данные не найдены</p>
+        <div className="text-center max-w-md mx-auto px-6">
+          <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <AlertCircleIcon className="w-8 h-8 text-slate-400" />
+          </div>
+          <h2 className="text-xl font-bold text-slate-900 mb-2">Данные не найдены</h2>
+          <p className="text-slate-600 mb-4">
+            {!currentUser.contractId || !currentUser.employeeId 
+              ? 'Ваш профиль не привязан к договору. Обратитесь к администратору организации.'
+              : 'Не удалось загрузить данные договора или информацию о сотруднике. Обратитесь к администратору.'}
+          </p>
+          <div className="bg-slate-50 rounded-xl p-4 text-left text-sm text-slate-600 space-y-2">
+            <p><strong>Телефон:</strong> {currentUser.phone}</p>
+            {currentUser.contractId && <p><strong>ID договора:</strong> {currentUser.contractId}</p>}
+            {currentUser.employeeId && <p><strong>ID сотрудника:</strong> {currentUser.employeeId}</p>}
+            {currentUser.bin && <p><strong>БИН:</strong> {currentUser.bin}</p>}
+          </div>
+          <button
+            onClick={() => {
+              localStorage.removeItem('medflow_uid');
+              localStorage.removeItem('medflow_phone');
+              window.location.reload();
+            }}
+            className="mt-6 px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors"
+          >
+            Выйти и войти заново
+          </button>
         </div>
       </div>
     );
@@ -465,22 +641,27 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
       console.log(`Сотрудник ${currentUser.employeeId} найден в листе ${index + 1}:`, !!empInSheet);
       
       if (empInSheet) {
-        // Находим врача по doctorId или используем данные из маршрутного листа
-        const doctor = doctors.find(d => d.id === sheet.doctorId);
-        const specialty = doctor?.specialty || sheet.specialty || 'Не указано';
-        const doctorName = doctor?.name || (sheet.virtualDoctor ? undefined : 'Не найден');
+        // Находим врача по специализации из маршрутного листа (более надежный способ)
+        const specialty = sheet.specialty || 'Не указано';
+        // Ищем врача по специализации, а не по ID (так как ID может не совпадать)
+        const doctor = doctors.find(d => d.specialty === specialty);
+        // Если не нашли по специализации, пытаемся найти по ID
+        const doctorById = doctor || doctors.find(d => String(d.id) === String(sheet.doctorId));
+        const doctorName = doctorById?.name || (sheet.virtualDoctor ? undefined : undefined);
         
         console.log(`Врач для листа ${index + 1}:`, {
           doctorId: sheet.doctorId,
           specialty: specialty,
           doctorName: doctorName || 'Не назначен',
-          virtualDoctor: sheet.virtualDoctor || false
+          virtualDoctor: sheet.virtualDoctor || false,
+          foundBySpecialty: !!doctor,
+          foundById: !!doctorById
         });
         
         employeeInSheets.push({
           doctorId: sheet.doctorId,
           specialty: specialty,
-          doctorName: doctorName,
+          doctorName: doctorName, // Может быть undefined для виртуальных врачей
           examinationDate: empInSheet.examinationDate,
           status: empInSheet.status || 'pending',
           virtualDoctor: sheet.virtualDoctor || false
@@ -585,6 +766,55 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
     window.location.reload();
   };
 
+  const handleRefresh = async () => {
+    if (!currentUser.contractId || !currentUser.employeeId) return;
+    
+    setIsLoading(true);
+    try {
+      const contractIdNum = parseInt(currentUser.contractId, 10);
+      if (isNaN(contractIdNum)) {
+        console.error('Invalid contractId:', currentUser.contractId);
+        setIsLoading(false);
+        return;
+      }
+
+      // Перезагружаем амбулаторную карту
+      console.log('🔄 EmployeeDashboard - Refreshing card data...');
+      const apiCard = await apiGetAmbulatoryCard(currentUser.employeeId, contractIdNum);
+      if (apiCard) {
+        console.log('✅ EmployeeDashboard - Refreshed card:', {
+          id: apiCard.id,
+          hasExaminations: !!apiCard.examinations,
+          examinationsCount: apiCard.examinations ? Object.keys(apiCard.examinations).length : 0,
+          hasAnamnesis: !!apiCard.anamnesis,
+          hasVitals: !!apiCard.vitals,
+          updatedAt: apiCard.updatedAt,
+        });
+        
+        const cardData: AmbulatoryCard = {
+          employeeId: apiCard.employeeId,
+          contractId: String(apiCard.contractId),
+          cardNumber: apiCard.cardNumber,
+          personalInfo: apiCard.personalInfo as any,
+          anamnesis: apiCard.anamnesis as any,
+          vitals: apiCard.vitals as any,
+          labTests: apiCard.labTests as any,
+          examinations: apiCard.examinations as any || {},
+          finalConclusion: apiCard.finalConclusion as any,
+          createdAt: apiCard.createdAt,
+          updatedAt: apiCard.updatedAt,
+        };
+        setAmbulatoryCard(cardData);
+      } else {
+        console.warn('⚠️ EmployeeDashboard - Card not found after refresh');
+      }
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-50">
       <div className="bg-white border-b border-slate-200">
@@ -602,6 +832,19 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
               <p className="text-sm text-slate-600">Клиника: {contract.clinicName}</p>
               </div>
               <button
+                onClick={handleRefresh}
+                disabled={isLoading}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-all disabled:opacity-50"
+                title="Обновить данные"
+              >
+                {isLoading ? (
+                  <LoaderIcon className="w-4 h-4 animate-spin" />
+                ) : (
+                  <ClockIcon className="w-4 h-4" />
+                )}
+                Обновить
+              </button>
+              <button
                 onClick={handleLogout}
                 className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-all"
               >
@@ -614,11 +857,101 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
       </div>
 
       <div className="max-w-5xl mx-auto px-6 py-8">
-        {/* Если есть амбулаторная карта, показываем её */}
+        {/* Статистика осмотра */}
+        {routeSheets.length > 0 && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div className="bg-white rounded-xl border border-slate-200 p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Всего врачей</p>
+                  <p className="text-2xl font-bold text-slate-900">{routeSheets.length}</p>
+                </div>
+                <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                  <UserMdIcon className="w-6 h-6 text-blue-600" />
+                </div>
+              </div>
+            </div>
+            <div className="bg-white rounded-xl border border-slate-200 p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Ожидают осмотра</p>
+                  <p className="text-2xl font-bold text-amber-600">
+                    {routeSheets.filter(rs => {
+                      const emp = rs.employees.find(e => e.employeeId === currentUser.employeeId);
+                      return emp && emp.status === 'pending';
+                    }).length}
+                  </p>
+                </div>
+                <div className="w-12 h-12 bg-amber-100 rounded-lg flex items-center justify-center">
+                  <ClockIcon className="w-6 h-6 text-amber-600" />
+                </div>
+              </div>
+            </div>
+            <div className="bg-white rounded-xl border border-slate-200 p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Завершено</p>
+                  <p className="text-2xl font-bold text-green-600">
+                    {routeSheets.filter(rs => {
+                      const emp = rs.employees.find(e => e.employeeId === currentUser.employeeId);
+                      return emp && (emp.status === 'examined' || emp.status === 'completed');
+                    }).length}
+                  </p>
+                </div>
+                <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+                  <CheckShieldIcon className="w-6 h-6 text-green-600" />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Прогресс-бар осмотра */}
+        {routeSheets.length > 0 && (() => {
+          const totalDoctors = routeSheets.length;
+          const completedDoctors = routeSheets.filter(rs => {
+            const emp = rs.employees.find(e => e.employeeId === currentUser.employeeId);
+            return emp && (emp.status === 'examined' || emp.status === 'completed');
+          }).length;
+          const progress = totalDoctors > 0 ? (completedDoctors / totalDoctors) * 100 : 0;
+          
+          return (
+            <div className="bg-white rounded-xl border border-slate-200 p-4 mb-6">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-medium text-slate-700">Прогресс медосмотра</span>
+                <span className="text-sm text-slate-500">{Math.round(progress)}%</span>
+              </div>
+              <div className="w-full bg-slate-200 rounded-full h-3">
+                <div 
+                  className="bg-green-600 h-3 rounded-full transition-all duration-300"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+              <p className="text-xs text-slate-500 mt-2">
+                Осмотрено {completedDoctors} из {totalDoctors} врачей
+              </p>
+            </div>
+          );
+        })()}
+
+        {/* Амбулаторная карта - всегда показываем, даже если пустая */}
         {ambulatoryCard ? (
           <AmbulatoryCardView card={ambulatoryCard} contract={contract} doctors={doctors} />
         ) : (
-          <>
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 mb-6">
+            <div className="text-center py-8">
+              <FileTextIcon className="w-16 h-16 text-slate-300 mx-auto mb-4" />
+              <h3 className="text-lg font-bold text-slate-900 mb-2">Амбулаторная карта</h3>
+              <p className="text-slate-600 mb-4">
+                Ваша амбулаторная карта будет создана автоматически при первом осмотре врача
+              </p>
+              <p className="text-sm text-slate-500">
+                Врачи будут заполнять данные осмотра в этой карте по мере прохождения медосмотра
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Маршрутный лист */}
         {(() => {
           const routeInfo = getEmployeeRouteInfo();
@@ -654,21 +987,51 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
               </h2>
               <div className="space-y-3">
                 {routeInfo.map((routeInfoItem, index) => (
-                  <div key={index} className="border border-slate-200 rounded-lg p-4">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <h3 className="font-semibold text-slate-900 mb-2">
-                          {routeInfoItem.doctorName ? (
-                            <span>{routeInfoItem.doctorName} ({routeInfoItem.specialty})</span>
-                          ) : (
-                            <span>{routeInfoItem.specialty}</span>
-                          )}
-                        </h3>
-                        {routeInfoItem.examinationDate && (
-                          <div className="flex items-center gap-2 text-sm text-slate-600 mb-1">
-                            <ClockIcon className="w-4 h-4" />
-                            <span>
-                              Дата осмотра: {new Date(routeInfoItem.examinationDate).toLocaleDateString('ru-RU', {
+                  <div 
+                    key={index} 
+                    className={`border rounded-lg p-4 transition-all ${
+                      routeInfoItem.status === 'completed' 
+                        ? 'bg-green-50 border-green-200 shadow-sm' 
+                        : routeInfoItem.status === 'examined'
+                        ? 'bg-blue-50 border-blue-200 shadow-sm'
+                        : 'bg-slate-50 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-3 mb-3">
+                          <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                            routeInfoItem.status === 'completed' 
+                              ? 'bg-green-100' 
+                              : routeInfoItem.status === 'examined'
+                              ? 'bg-blue-100'
+                              : 'bg-slate-200'
+                          }`}>
+                            <UserMdIcon className={`w-6 h-6 ${
+                              routeInfoItem.status === 'completed' 
+                                ? 'text-green-600' 
+                                : routeInfoItem.status === 'examined'
+                                ? 'text-blue-600'
+                                : 'text-slate-600'
+                            }`} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h3 className="font-semibold text-slate-900 mb-1">
+                              {routeInfoItem.doctorName ? (
+                                <span>{routeInfoItem.doctorName}</span>
+                              ) : (
+                                <span className="text-slate-500">Врач не назначен</span>
+                              )}
+                            </h3>
+                            <p className="text-sm text-slate-600">{routeInfoItem.specialty}</p>
+                          </div>
+                        </div>
+                        
+                        {routeInfoItem.examinationDate ? (
+                          <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 rounded-lg px-3 py-2">
+                            <CheckShieldIcon className="w-4 h-4 flex-shrink-0" />
+                            <span className="font-medium">
+                              Осмотр пройден: {new Date(routeInfoItem.examinationDate).toLocaleDateString('ru-RU', {
                                 year: 'numeric',
                                 month: 'long',
                                 day: 'numeric',
@@ -677,40 +1040,42 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
                               })}
                             </span>
                           </div>
-                        )}
-                        {!routeInfoItem.examinationDate && contract.calendarPlan?.startDate && (
-                          <div className="flex items-center gap-2 text-sm text-slate-500">
-                            <CalendarIcon className="w-4 h-4" />
+                        ) : contract.calendarPlan?.startDate ? (
+                          <div className="flex items-center gap-2 text-sm text-slate-600 bg-slate-50 rounded-lg px-3 py-2">
+                            <CalendarIcon className="w-4 h-4 flex-shrink-0" />
                             <span>
                               Период осмотра: {new Date(contract.calendarPlan.startDate).toLocaleDateString('ru-RU')} - {contract.calendarPlan.endDate ? new Date(contract.calendarPlan.endDate).toLocaleDateString('ru-RU') : '—'}
                             </span>
                           </div>
+                        ) : null}
+                        
+                        {!routeInfoItem.doctorName && (
+                          <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 mt-2">
+                            ⚠️ Врач еще не назначен. Осмотр будет проведен врачом указанной специализации.
+                          </p>
                         )}
                       </div>
-                      <div>
+                      <div className="flex-shrink-0">
                         {routeInfoItem.status === 'completed' && (
-                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold bg-green-100 text-green-700">
+                          <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-green-100 text-green-700">
                             <CheckShieldIcon className="w-3 h-3 mr-1" />
                             Завершен
                           </span>
                         )}
                         {routeInfoItem.status === 'examined' && (
-                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-700">
+                          <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-blue-100 text-blue-700">
+                            <CheckShieldIcon className="w-3 h-3 mr-1" />
                             Осмотрен
                           </span>
                         )}
                         {routeInfoItem.status === 'pending' && (
-                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-600">
+                          <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-amber-100 text-amber-700">
+                            <ClockIcon className="w-3 h-3 mr-1" />
                             Ожидает
                           </span>
                         )}
                       </div>
                     </div>
-                    {!routeInfoItem.doctorName && (
-                      <p className="text-xs text-slate-400 mt-2 italic">
-                        Врач еще не назначен. Осмотр будет проведен врачом указанной специализации.
-                      </p>
-                    )}
                   </div>
                 ))}
               </div>
@@ -724,30 +1089,42 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
             <UserMdIcon className="w-5 h-5" />
             Личные данные
           </h2>
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <p className="text-slate-500">ФИО</p>
-              <p className="font-medium text-slate-900">{employee.name}</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-4">
+              <div>
+                <p className="text-xs text-slate-500 mb-1">ФИО</p>
+                <p className="font-semibold text-slate-900 text-base">{employee.name}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 mb-1">Должность</p>
+                <p className="font-medium text-slate-900">{employee.position}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 mb-1">Дата рождения</p>
+                <p className="font-medium text-slate-900">{employee.dob || '—'}</p>
+              </div>
             </div>
-            <div>
-              <p className="text-slate-500">Должность</p>
-              <p className="font-medium text-slate-900">{employee.position}</p>
+            <div className="space-y-4">
+              <div>
+                <p className="text-xs text-slate-500 mb-1">Пол</p>
+                <p className="font-medium text-slate-900">{employee.gender}</p>
+              </div>
+              {employee.phone && (
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Телефон</p>
+                  <p className="font-medium text-slate-900">{employee.phone}</p>
+                </div>
+              )}
+              <div>
+                <p className="text-xs text-slate-500 mb-1">Статус осмотра</p>
+                <div className="mt-1">{getStatusBadge(employee.status)}</div>
+              </div>
             </div>
-            <div>
-              <p className="text-slate-500">Дата рождения</p>
-              <p className="font-medium text-slate-900">{employee.dob || '—'}</p>
-            </div>
-            <div>
-              <p className="text-slate-500">Пол</p>
-              <p className="font-medium text-slate-900">{employee.gender}</p>
-            </div>
-            <div className="col-span-2">
-              <p className="text-slate-500">Вредные факторы</p>
-              <p className="font-medium text-amber-600">{employee.harmfulFactor || '—'}</p>
-            </div>
-            <div className="col-span-2">
-              <p className="text-slate-500">Статус осмотра</p>
-              <div className="mt-1">{getStatusBadge(employee.status)}</div>
+            <div className="md:col-span-2">
+              <p className="text-xs text-slate-500 mb-2">Вредные факторы</p>
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                <p className="font-medium text-amber-900 text-sm leading-relaxed">{employee.harmfulFactor || '—'}</p>
+              </div>
             </div>
           </div>
         </div>
@@ -769,9 +1146,6 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
             </div>
           );
         })()}
-
-          </>
-        )}
       </div>
     </div>
   );

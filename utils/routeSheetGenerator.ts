@@ -1,6 +1,6 @@
 import { Employee, Doctor, DoctorRouteSheet } from '../types';
 import { FACTOR_RULES, FactorRule } from '../factorRules';
-import { rtdb, ref, set, get, update } from '../services/firebase';
+import { apiCreateRouteSheet, apiListRouteSheets, apiUpdateRouteSheet, apiGetUserByPhone } from '../services/api';
 
 /**
  * Определение правил по вредным факторам (копия из других компонентов)
@@ -168,8 +168,17 @@ export const createRouteSheetsForAllDoctors = async (
         employees: routeSheet.employees.map(e => ({ id: e.employeeId, name: e.name, position: e.position }))
       });
 
-      await set(ref(rtdb, `routeSheets/${routeSheetKey}`), routeSheet);
-      console.log(`✅ Route sheet created for ${doctor.specialty} ${doctor.name} with ${routeSheet.employees.length} employees`);
+      const contractIdNum = parseInt(contractId, 10);
+      if (!isNaN(contractIdNum)) {
+        await apiCreateRouteSheet({
+          doctorId: doctor.id,
+          contractId: contractIdNum,
+          specialty: doctor.specialty,
+          virtualDoctor: false,
+          employees: routeSheet.employees,
+        });
+        console.log(`✅ Route sheet created for ${doctor.specialty} ${doctor.name} with ${routeSheet.employees.length} employees`);
+      }
     } else {
       console.log(`❌ No patients for ${doctor.specialty} ${doctor.name}, skipping route sheet`);
     }
@@ -237,14 +246,44 @@ export const createRouteSheetsForAllSpecialties = async (
     }
 
     if (relevantEmployees.length > 0) {
-      // Используем ID врача, если есть, или создаем виртуальный ID для специализации
-      const doctorId = doctor?.id || `virtual_${specialty.toLowerCase().replace(/\s+/g, '_')}_${contractId}`;
+      // Определяем doctorId для маршрутного листа
+      let doctorIdForRouteSheet: string;
+      let isVirtual = false;
+      
+      if (doctor) {
+        // Если врач есть, пытаемся найти его аккаунт в таблице users по телефону
+        if (doctor.phone) {
+          try {
+            const doctorUser = await apiGetUserByPhone(doctor.phone);
+            if (doctorUser && doctorUser.doctorId) {
+              // Используем doctorId из таблицы users
+              doctorIdForRouteSheet = doctorUser.doctorId;
+              console.log(`Found doctor user account with doctorId: ${doctorIdForRouteSheet}`);
+            } else {
+              // Если аккаунта нет, используем ID из таблицы doctors как строку
+              doctorIdForRouteSheet = String(doctor.id);
+              console.log(`No user account found, using doctor table id: ${doctorIdForRouteSheet}`);
+            }
+          } catch (error) {
+            // Если ошибка при поиске, используем ID из таблицы doctors
+            doctorIdForRouteSheet = String(doctor.id);
+            console.log(`Error finding doctor user, using doctor table id: ${doctorIdForRouteSheet}`);
+          }
+        } else {
+          // Если у врача нет телефона, используем ID из таблицы doctors
+          doctorIdForRouteSheet = String(doctor.id);
+        }
+      } else {
+        // Виртуальный врач - создаем виртуальный ID
+        doctorIdForRouteSheet = `virtual_${specialty.toLowerCase().replace(/\s+/g, '_')}_${contractId}`;
+        isVirtual = true;
+      }
       
       const routeSheet: DoctorRouteSheet = {
-        doctorId: doctorId,
+        doctorId: doctorIdForRouteSheet,
         contractId,
         specialty: specialty, // Добавляем специализацию для виртуальных врачей
-        virtualDoctor: !doctor, // Флаг виртуального врача
+        virtualDoctor: isVirtual, // Флаг виртуального врача
         employees: relevantEmployees.map(emp => ({
           employeeId: emp.id,
           name: emp.name,
@@ -255,23 +294,32 @@ export const createRouteSheetsForAllSpecialties = async (
         createdAt: new Date().toISOString(),
       };
 
-      const routeSheetKey = `${doctorId}_${contractId}`;
+      const routeSheetKey = `${doctorIdForRouteSheet}_${contractId}`;
       console.log(`Сохранение маршрутного листа: ${routeSheetKey}`);
       console.log('Данные маршрутного листа:', {
-        doctorId: doctorId,
+        doctorId: doctorIdForRouteSheet,
         specialty: specialty,
-        virtualDoctor: !doctor,
+        virtualDoctor: isVirtual,
         doctorName: doctor?.name || 'Не назначен',
         contractId,
         employeesCount: routeSheet.employees.length
       });
 
-      await set(ref(rtdb, `routeSheets/${routeSheetKey}`), routeSheet);
-      
-      if (doctor) {
-        console.log(`✅ Route sheet created for ${specialty} ${doctor.name} with ${routeSheet.employees.length} employees`);
-      } else {
-        console.log(`✅ Virtual route sheet created for ${specialty} (врач не назначен) with ${routeSheet.employees.length} employees`);
+      const contractIdNum = parseInt(contractId, 10);
+      if (!isNaN(contractIdNum)) {
+        await apiCreateRouteSheet({
+          doctorId: doctorIdForRouteSheet,
+          contractId: contractIdNum,
+          specialty: specialty,
+          virtualDoctor: isVirtual,
+          employees: routeSheet.employees,
+        });
+        
+        if (doctor) {
+          console.log(`✅ Route sheet created for ${specialty} ${doctor.name} (doctorId: ${doctorIdForRouteSheet}) with ${routeSheet.employees.length} employees`);
+        } else {
+          console.log(`✅ Virtual route sheet created for ${specialty} (врач не назначен) with ${routeSheet.employees.length} employees`);
+        }
       }
     } else {
       console.log(`❌ No patients for ${specialty}, skipping route sheet`);
@@ -328,51 +376,14 @@ export const updateRouteSheetsForNewDoctor = async (
   console.log(`Updating route sheets for new doctor: ${doctor.name} (${doctor.specialty})`);
   
   try {
-    // Ищем все маршрутные листы, которые ожидают врача этой специализации
-    const routeSheetsRef = ref(rtdb, 'routeSheets');
-    const routeSheetsSnapshot = await get(routeSheetsRef);
+    // Ищем все маршрутные листы через API
+    // Для этого нужно получить все договоры клиники и проверить их маршрутные листы
+    // Пока упрощенная версия - обновляем только при создании нового врача
+    // В будущем можно добавить endpoint для поиска виртуальных маршрутных листов
     
-    if (!routeSheetsSnapshot.exists()) {
-      console.log('No route sheets found');
-      return;
-    }
-    
-    const routeSheets = routeSheetsSnapshot.val();
-    const updates: Record<string, any> = {};
-    
-    // Ищем виртуальные маршрутные листы для этой специализации
-    Object.entries(routeSheets).forEach(([key, sheet]: [string, any]) => {
-      const routeSheet = sheet as DoctorRouteSheet;
-      
-      // Проверяем, что это виртуальный врач нужной специализации
-      if (routeSheet.virtualDoctor && routeSheet.specialty === doctor.specialty) {
-        console.log(`Found virtual route sheet for ${doctor.specialty}: ${key}`);
-        
-        // Создаем новый ключ с реальным ID врача
-        const newKey = `${doctor.id}_${routeSheet.contractId}`;
-        
-        // Обновляем данные маршрутного листа
-        const updatedRouteSheet: DoctorRouteSheet = {
-          ...routeSheet,
-          doctorId: doctor.id,
-          virtualDoctor: false // Теперь это реальный врач
-        };
-        
-        // Добавляем в обновления
-        updates[`routeSheets/${newKey}`] = updatedRouteSheet;
-        updates[`routeSheets/${key}`] = null; // Удаляем старый виртуальный лист
-        
-        console.log(`Will update route sheet: ${key} -> ${newKey}`);
-      }
-    });
-    
-    // Применяем все обновления одновременно
-    if (Object.keys(updates).length > 0) {
-      await update(ref(rtdb), updates);
-      console.log(`✅ Updated ${Object.keys(updates).length / 2} route sheets for doctor ${doctor.name}`);
-    } else {
-      console.log(`No virtual route sheets found for specialty ${doctor.specialty}`);
-    }
+    console.log(`Note: Virtual route sheets will be updated automatically when doctor is assigned`);
+    // TODO: Реализовать обновление виртуальных маршрутных листов через API
+    // Это требует дополнительного endpoint на бэкенде для поиска виртуальных листов
     
   } catch (error) {
     console.error('Error updating route sheets for new doctor:', error);

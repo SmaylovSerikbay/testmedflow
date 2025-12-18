@@ -48,6 +48,33 @@ const EmployeeModal: React.FC<EmployeeModalProps> = React.memo(({
     }
   }, [shouldFocus, isOpen]);
 
+  // Функции конвертации дат между форматами ДД.ММ.ГГГГ и YYYY-MM-DD
+  const formatDateToInput = useCallback((dateStr: string): string => {
+    if (!dateStr) return '';
+    // Если уже в формате YYYY-MM-DD, возвращаем как есть
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+    // Если в формате ДД.ММ.ГГГГ, конвертируем
+    const match = dateStr.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+    if (match) {
+      const [, day, month, year] = match;
+      return `${year}-${month}-${day}`;
+    }
+    return '';
+  }, []);
+
+  const formatDateFromInput = useCallback((dateStr: string): string => {
+    if (!dateStr) return '';
+    // Если в формате YYYY-MM-DD, конвертируем в ДД.ММ.ГГГГ
+    const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (match) {
+      const [, year, month, day] = match;
+      return `${day}.${month}.${year}`;
+    }
+    // Если уже в формате ДД.ММ.ГГГГ, возвращаем как есть
+    if (/^\d{2}\.\d{2}\.\d{4}$/.test(dateStr)) return dateStr;
+    return dateStr;
+  }, []);
+
   const validate = useCallback((emp: Employee | null): boolean => {
     if (!emp) return false;
     const newErrors: Record<string, string> = {};
@@ -56,8 +83,14 @@ const EmployeeModal: React.FC<EmployeeModalProps> = React.memo(({
       newErrors.name = 'Обязательное поле';
     }
     
-    if (emp.dob && !/^\d{2}\.\d{2}\.\d{4}$/.test(emp.dob)) {
-      newErrors.dob = 'Формат: ДД.ММ.ГГГГ';
+    // Валидация даты рождения - принимаем оба формата
+    if (emp.dob && !/^\d{2}\.\d{2}\.\d{4}$/.test(emp.dob) && !/^\d{4}-\d{2}-\d{2}$/.test(emp.dob)) {
+      newErrors.dob = 'Формат: ДД.ММ.ГГГГ или выберите из календаря';
+    }
+    
+    // Валидация даты последнего медосмотра - принимаем оба формата
+    if (emp.lastMedDate && !/^\d{2}\.\d{2}\.\d{4}$/.test(emp.lastMedDate) && !/^\d{4}-\d{2}-\d{2}$/.test(emp.lastMedDate)) {
+      newErrors.lastMedDate = 'Формат: ДД.ММ.ГГГГ или выберите из календаря';
     }
     
     setErrors(newErrors);
@@ -81,7 +114,19 @@ const EmployeeModal: React.FC<EmployeeModalProps> = React.memo(({
 
   const handleFieldChange = useCallback((field: keyof Employee) => {
     return (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-      onFieldChange(field, e.target.value);
+      let value = e.target.value;
+      
+      // Для полей дат конвертируем из формата input type="date" (YYYY-MM-DD) в формат ДД.ММ.ГГГГ
+      if ((field === 'dob' || field === 'lastMedDate') && value) {
+        // Если значение в формате YYYY-MM-DD (из календаря), конвертируем
+        if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+          value = formatDateFromInput(value);
+        }
+        // Если значение уже в формате ДД.ММ.ГГГГ, оставляем как есть
+        // Если пустое, оставляем пустым
+      }
+      
+      onFieldChange(field, value);
       // Очищаем ошибку при изменении поля
       if (errors[field]) {
         setErrors(prev => {
@@ -91,7 +136,7 @@ const EmployeeModal: React.FC<EmployeeModalProps> = React.memo(({
         });
       }
     };
-  }, [errors, onFieldChange]);
+  }, [errors, onFieldChange, formatDateFromInput]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
@@ -171,18 +216,20 @@ const EmployeeModal: React.FC<EmployeeModalProps> = React.memo(({
                       Дата рождения
                     </label>
                     <input
-                      type="text"
-                      value={employee.dob || ''}
+                      type="date"
+                      value={formatDateToInput(employee.dob || '')}
                       onChange={handleFieldChange('dob')}
                       className={`w-full px-4 py-2.5 bg-white border rounded-lg text-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
                         errors.dob ? 'border-red-300 focus:ring-red-500' : 'border-slate-200'
                       }`}
                       placeholder="01.01.1980"
                       autoComplete="off"
+                      title="Выберите дату из календаря или введите в формате ДД.ММ.ГГГГ"
                     />
                     {errors.dob && (
                       <p className="text-xs text-red-500 mt-1">{errors.dob}</p>
                     )}
+                    <p className="text-xs text-slate-400 mt-1">Выберите из календаря или введите вручную (ДД.ММ.ГГГГ)</p>
                   </div>
 
                   <div>
@@ -275,13 +322,20 @@ const EmployeeModal: React.FC<EmployeeModalProps> = React.memo(({
                       Дата посл. МО
                     </label>
                     <input
-                      type="text"
-                      value={employee.lastMedDate || ''}
+                      type="date"
+                      value={formatDateToInput(employee.lastMedDate || '')}
                       onChange={handleFieldChange('lastMedDate')}
-                      className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      className={`w-full px-4 py-2.5 bg-white border rounded-lg text-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
+                        errors.lastMedDate ? 'border-red-300 focus:ring-red-500' : 'border-slate-200'
+                      }`}
                       placeholder="01.01.2023"
                       autoComplete="off"
+                      title="Выберите дату из календаря или введите в формате ДД.ММ.ГГГГ"
                     />
+                    {errors.lastMedDate && (
+                      <p className="text-xs text-red-500 mt-1">{errors.lastMedDate}</p>
+                    )}
+                    <p className="text-xs text-slate-400 mt-1">Выберите из календаря или введите вручную (ДД.ММ.ГГГГ)</p>
                   </div>
                 </div>
               </div>
