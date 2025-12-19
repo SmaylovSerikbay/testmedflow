@@ -45,8 +45,6 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
-    environment:
-      # API будет проксироваться через Vite proxy для работы через HTTPS
     ports:
       - "5173:5173"
     volumes:
