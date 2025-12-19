@@ -7,6 +7,8 @@ export default defineConfig(({ mode }) => {
       server: {
         port: 5173,
         host: '0.0.0.0',
+        // Разрешаем все хосты для работы через Cloudflare Tunnel и другие временные домены
+        allowedHosts: true,
         watch: {
           usePolling: true,
           interval: 1000,
