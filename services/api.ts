@@ -1,6 +1,7 @@
 import { Employee, ContractDocument } from '../types';
 
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+// Используем относительный путь для API - проксируется через Vite
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const controller = new AbortController();

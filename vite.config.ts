@@ -9,6 +9,14 @@ export default defineConfig(({ mode }) => {
         host: '0.0.0.0',
         // Разрешаем все хосты для работы через Cloudflare Tunnel и другие временные домены
         allowedHosts: true,
+        // Проксируем API запросы на backend через HTTPS
+        proxy: {
+          '/api': {
+            target: 'http://backend:8080',
+            changeOrigin: true,
+            secure: false,
+          },
+        },
         watch: {
           usePolling: true,
           interval: 1000,
