@@ -126,7 +126,7 @@ const App: React.FC = () => {
 
   const handleAuthSuccess = async () => {
     // После успешной авторизации проверяем роль пользователя через Go API
-    const phone = localStorage.getItem('medflow_phone');
+    const phone = localStorage.getItem('medwork_phone');
     if (!phone) {
       console.error('No phone in localStorage after auth success');
       return;
@@ -137,8 +137,8 @@ const App: React.FC = () => {
       if (!apiUser) {
         console.error('User not found after auth success, phone:', phone);
         // Очищаем localStorage и показываем форму регистрации
-        localStorage.removeItem('medflow_uid');
-        localStorage.removeItem('medflow_phone');
+        localStorage.removeItem('medwork_uid');
+        localStorage.removeItem('medwork_phone');
         setAppState(AppState.AUTH);
         return;
       }
@@ -198,8 +198,8 @@ const App: React.FC = () => {
     } catch (error: any) {
       console.error("Error loading user after auth:", error);
       // При ошибке очищаем localStorage и показываем форму авторизации
-      localStorage.removeItem('medflow_uid');
-      localStorage.removeItem('medflow_phone');
+      localStorage.removeItem('medwork_uid');
+      localStorage.removeItem('medwork_phone');
       setAppState(AppState.AUTH);
     }
   };

@@ -761,8 +761,8 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('medflow_uid');
-    localStorage.removeItem('medflow_phone');
+    localStorage.removeItem('medwork_uid');
+    localStorage.removeItem('medwork_phone');
     window.location.reload();
   };
 
