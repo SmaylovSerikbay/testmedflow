@@ -7,7 +7,7 @@ RUN npm install --omit=dev=false
 
 COPY . .
 
-ENV VITE_API_BASE_URL=http://localhost:8080
+# API будет использовать относительный путь через Vite proxy
 
 EXPOSE 5173
 

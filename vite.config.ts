@@ -22,8 +22,8 @@ export default defineConfig(({ mode }) => {
           interval: 1000,
         },
         hmr: {
-          host: 'localhost',
-          port: 5173,
+          // Отключаем HMR WebSocket для работы через Cloudflare Tunnel
+          clientPort: 443,
         },
       },
       plugins: [react()],
