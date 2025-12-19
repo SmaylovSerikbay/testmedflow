@@ -591,8 +591,8 @@ const EmployeeDashboard: React.FC<EmployeeDashboardProps> = ({ currentUser }) =>
           </div>
           <button
             onClick={() => {
-              localStorage.removeItem('medflow_uid');
-              localStorage.removeItem('medflow_phone');
+              localStorage.removeItem('medwork_uid');
+              localStorage.removeItem('medwork_phone');
               window.location.reload();
             }}
             className="mt-6 px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors"

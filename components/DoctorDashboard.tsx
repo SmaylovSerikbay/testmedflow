@@ -802,8 +802,8 @@ const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ currentUser }) => {
   }, [searchQuery, statusFilter]);
 
   const handleLogout = useCallback(() => {
-    localStorage.removeItem('medflow_uid');
-    localStorage.removeItem('medflow_phone');
+    localStorage.removeItem('medwork_uid');
+    localStorage.removeItem('medwork_phone');
     window.location.reload();
   }, []);
 

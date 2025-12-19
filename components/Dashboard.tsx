@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx';
 import { parseEmployeeData } from '../services/geminiService';
 import { sendWhatsAppMessage, generateOTP } from '../services/greenApi';
 import { apiListContractsByBin, apiUpdateContract, apiListDoctors, apiGetUserByPhone, apiCreateUser, ApiContract, ApiDoctor } from '../services/api';
+import BrandLogo from './BrandLogo';
 import { 
   UploadIcon, LoaderIcon, SparklesIcon, LogoIcon, 
   FileTextIcon, CalendarIcon, UsersIcon, CheckShieldIcon,
@@ -139,12 +140,12 @@ const useUserProfile = () => {
 
   useEffect(() => {
     const fetchProfile = async () => {
-        const phone = localStorage.getItem('medflow_phone');
+        const phone = localStorage.getItem('medwork_phone');
         if (!phone) {
             setIsLoadingProfile(false);
             // Очищаем состояние и перенаправляем на главную
-            localStorage.removeItem('medflow_uid');
-            localStorage.removeItem('medflow_phone');
+            localStorage.removeItem('medwork_uid');
+            localStorage.removeItem('medwork_phone');
             window.location.href = '/';
             return;
         }
@@ -552,7 +553,7 @@ const Header: React.FC<HeaderProps> = React.memo(({
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-2">
               <LogoIcon className="w-5 h-5 text-slate-900" />
-              <span className="font-bold text-base tracking-tight">MedFlow</span>
+              <BrandLogo size="sm" />
             </div>
             
             {currentUser && (

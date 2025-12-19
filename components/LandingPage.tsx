@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { CheckShieldIcon, UsersIcon, SparklesIcon, WhatsAppIcon, LoaderIcon } from './Icons';
+import BrandLogo from './BrandLogo';
 
 interface LandingPageProps {
   onGetStarted: () => void;
@@ -21,7 +22,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted }) => {
       <nav className={`fixed w-full z-50 transition-all duration-500 ease-[cubic-bezier(0.165,0.84,0.44,1)] ${scrolled ? 'bg-white/70 backdrop-blur-xl border-b border-gray-200/50 py-3' : 'bg-transparent py-6'}`}>
         <div className="max-w-[1400px] mx-auto px-6 flex items-center justify-between">
           <div className="group cursor-pointer" onClick={() => window.scrollTo({top:0, behavior: 'smooth'})}>
-            <span className="text-sm text-slate-500 font-mono tracking-wide">medflow.kz</span>
+            <BrandLogo size="sm" />
           </div>
           <div className="flex items-center gap-6">
             <button className="text-xs font-medium text-[#1D1D1F] hover:opacity-60 transition-opacity hidden sm:block">Решения</button>
@@ -233,7 +234,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted }) => {
         <div className="max-w-[1400px] mx-auto px-6 flex flex-col md:flex-row justify-between gap-8">
              <div className="flex-1 max-w-sm">
                  <div className="mb-4">
-                    <span className="text-sm text-slate-500 font-mono tracking-wide">medflow.kz</span>
+                    <BrandLogo size="sm" variant="monochrome" />
                  </div>
                  <p className="mb-4 leading-relaxed">
                      Платформа №1 в Казахстане для автоматизации медицинских осмотров и интеграции с клиниками.
@@ -262,7 +263,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted }) => {
              <div>
                  <h4 className="font-bold text-[#1D1D1F] mb-4">Контакты</h4>
                  <ul className="space-y-3">
-                     <li>info@medflow.kz</li>
+                     <li>info@medwork.digital</li>
                      <li>+77776875411</li>
                      <li>г. Астана</li>
                  </ul>

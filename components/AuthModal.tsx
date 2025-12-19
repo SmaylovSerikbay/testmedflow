@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { UserRole } from '../types';
+import BrandLogo from './BrandLogo';
 import { sendWhatsAppMessage, generateOTP } from '../services/greenApi';
 import { apiGetUserByPhone, apiCreateUser } from '../services/api';
 
@@ -75,7 +76,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
       console.log('📱 Отправка на номер:', phone);
     }
 
-    const message = `Ваш код подтверждения MedFlow: ${code}`;
+    const message = `Ваш код подтверждения medwork.digital: ${code}`;
 
     try {
       // Отправляем сообщение и ждем результат
@@ -128,8 +129,8 @@ const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
       if (existing) {
         // --- ПОЛЬЗОВАТЕЛЬ НАЙДЕН ---
         console.log('✅ User found:', existing);
-        localStorage.setItem('medflow_uid', existing.uid);
-        localStorage.setItem('medflow_phone', cleanPhone);
+        localStorage.setItem('medwork_uid', existing.uid);
+        localStorage.setItem('medwork_phone', cleanPhone);
         setLoading(false);
         onSuccess();
         return;
@@ -140,8 +141,8 @@ const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
 
       // --- ПОЛЬЗОВАТЕЛЬ НЕ НАЙДЕН (РЕГИСТРАЦИЯ) ---
       const newUid = 'user_' + Date.now();
-      localStorage.setItem('medflow_uid', newUid);
-      localStorage.setItem('medflow_phone', cleanPhone);
+      localStorage.setItem('medwork_uid', newUid);
+      localStorage.setItem('medwork_phone', cleanPhone);
 
       setStep('REGISTER');
       setLoading(false);
@@ -178,10 +179,10 @@ const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
     
     try {
         // UID уже сохранен после проверки OTP
-        let uid = localStorage.getItem('medflow_uid');
+        let uid = localStorage.getItem('medwork_uid');
         if (!uid) {
           uid = 'user_' + Date.now();
-          localStorage.setItem('medflow_uid', uid);
+          localStorage.setItem('medwork_uid', uid);
         }
         
         const cleanPhone = phone.replace(/\D/g, '');
@@ -200,7 +201,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
         await apiCreateUser(userData as any);
         
         // WhatsApp отправляем асинхронно, НЕ блокируем переход
-        sendWhatsAppMessage(phone, `Добро пожаловать в MedFlow, ${leaderName}!`).catch(e => console.warn("WhatsApp skip"));
+        sendWhatsAppMessage(phone, `Добро пожаловать в medwork.digital, ${leaderName}!`).catch(e => console.warn("WhatsApp skip"));
 
         // Убираем loading перед переходом
         setLoading(false);
@@ -228,7 +229,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
 
       <div className="relative w-full max-w-md bg-white p-8 md:p-10 rounded-2xl shadow-xl overflow-hidden flex flex-col max-h-[95vh]">
         <div className="relative z-10 text-center mb-8">
-          <p className="text-sm text-slate-500 mb-4 font-mono tracking-wide">medflow.kz</p>
+          <BrandLogo size="sm" variant="monochrome" className="mb-4" />
           <h2 className="text-2xl font-bold text-slate-900 tracking-tight mb-2">
             {step === 'PHONE' && 'Добро пожаловать'}
             {step === 'OTP' && 'Подтверждение'}

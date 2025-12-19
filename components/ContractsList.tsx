@@ -483,7 +483,7 @@ const CreateContractModal: React.FC<CreateContractModalProps> = ({ currentUser, 
       
       if (isInviteNeeded && invitePhone) {
         sendWhatsAppMessage(invitePhone, 
-          `Здравствуйте! Организация "${currentUser.companyName}" отправила вам договор на медосмотр (сумма: ${contractTerms.price} тг). Зарегистрируйтесь в MedFlow, чтобы подписать: https://medflow.kz/register`
+          `Здравствуйте! Организация "${currentUser.companyName}" отправила вам договор на медосмотр (сумма: ${contractTerms.price} тг). Зарегистрируйтесь в medwork.digital, чтобы подписать: https://medwork.digital/register`
         ).catch(err => console.error("WA Error", err));
       }
       

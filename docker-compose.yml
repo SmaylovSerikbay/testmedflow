@@ -3,7 +3,7 @@ version: "3.9"
 services:
   db:
     image: postgres:16
-    container_name: medflow-postgres
+    container_name: medwork-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: medflow
@@ -23,7 +23,7 @@ services:
     build:
       context: .
       dockerfile: backend.Dockerfile
-    container_name: medflow-backend
+    container_name: medwork-backend
     restart: unless-stopped
     depends_on:
       db:
@@ -41,7 +41,7 @@ services:
     build:
       context: .
       dockerfile: frontend.Dockerfile
-    container_name: medflow-frontend
+    container_name: medwork-frontend
     restart: unless-stopped
     depends_on:
       - backend

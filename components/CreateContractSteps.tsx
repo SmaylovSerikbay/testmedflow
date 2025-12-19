@@ -77,7 +77,7 @@ export const StepOne: React.FC<StepOneProps> = ({
       </div>
     ) : searchBin.length === 12 && !isSearching && !foundCounterparty ? (
       <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl">
-        <p className="text-sm text-amber-800 font-medium mb-2">Организация не найдена в MedFlow.</p>
+        <p className="text-sm text-amber-800 font-medium mb-2">Организация не найдена в medwork.digital.</p>
         <p className="text-xs text-amber-600 mb-3">
           Мы отправим приглашение на регистрацию и подписание договора в WhatsApp.
         </p>

@@ -30,7 +30,7 @@ const App: React.FC = () => {
     }
     
     const checkUser = async () => {
-      const phone = localStorage.getItem('medflow_phone');
+      const phone = localStorage.getItem('medwork_phone');
       if (!phone) {
         setIsCheckingUser(false);
         return;
@@ -95,8 +95,8 @@ const App: React.FC = () => {
         } else {
           // Пользователь не найден - очищаем localStorage и показываем форму авторизации
           console.warn('User not found in database, phone:', phone);
-          localStorage.removeItem('medflow_uid');
-          localStorage.removeItem('medflow_phone');
+          localStorage.removeItem('medwork_uid');
+          localStorage.removeItem('medwork_phone');
           setAppState(AppState.AUTH);
         }
       } catch (error: any) {

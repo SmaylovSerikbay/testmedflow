@@ -1,4 +1,4 @@
-module medflow-backend
+module medwork-backend
 
 go 1.22
 

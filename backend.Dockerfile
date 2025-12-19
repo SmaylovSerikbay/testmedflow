@@ -9,13 +9,13 @@ RUN go mod download
 COPY backend/. .
 # Ensure go.sum is populated with all dependencies (including pgx) before build
 RUN go mod tidy
-RUN go build -o /app/medflow-backend .
+RUN go build -o /app/medwork-backend .
 
 FROM alpine:3.20
 
 WORKDIR /app
 
-COPY --from=builder /app/medflow-backend /app/medflow-backend
+COPY --from=builder /app/medwork-backend /app/medwork-backend
 
 ENV DB_HOST=localhost \
     DB_PORT=5432 \
@@ -25,7 +25,7 @@ ENV DB_HOST=localhost \
 
 EXPOSE 8080
 
-ENTRYPOINT ["/app/medflow-backend"]
+ENTRYPOINT ["/app/medwork-backend"]
 
 
 

@@ -2,11 +2,20 @@
 <img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
 </div>
 
-# Run and deploy your AI Studio app
+# medwork.digital
 
-This contains everything you need to run your app locally.
+<div align="center">
+  <h1>
+    <span style="font-weight: 700; background: linear-gradient(135deg, #0ea5e9, #06b6d4); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+      medwork
+    </span>
+    <span style="font-weight: 300; color: #64748b;">.digital</span>
+  </h1>
+</div>
 
-View your app in AI Studio: https://ai.studio/apps/drive/1rAgn9tEG_tYICFwHaVXLwFB8xuvRUlRT
+**Платформа для автоматизации профессиональных медицинских осмотров.**
+
+Связывает клиники и организации, управляет контрактами, маршрутными листами и медицинскими картами формы 052/у.
 
 ## Run Locally
 

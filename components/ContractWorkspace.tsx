@@ -192,7 +192,7 @@ const ContractWorkspace: React.FC<ContractWorkspaceProps> = ({
 
     try {
       const otp = generateOTP();
-      const message = `Ваш код для подписания договора в MedFlow: ${otp}`;
+      const message = `Ваш код для подписания договора в medwork.digital: ${otp}`;
       
       await sendWhatsAppMessage(currentUser.phone, message);
       
