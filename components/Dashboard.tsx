@@ -551,8 +551,7 @@ const Header: React.FC<HeaderProps> = React.memo(({
         <div className="flex items-center justify-between">
           {/* Left: Logo and User Info */}
           <div className="flex items-center gap-6">
-            <div className="flex items-center gap-2">
-              <LogoIcon className="w-5 h-5 text-slate-900" />
+            <div className="flex items-center">
               <BrandLogo size="sm" />
             </div>
             
