@@ -161,9 +161,22 @@ func initDB(ctx context.Context) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("parse dsn: %w", err)
 	}
 
+	// Оптимизация пула соединений для многопоточности и производительности
+	cfg.MaxConns = 25                               // Максимальное количество соединений
+	cfg.MinConns = 5                                // Минимальное количество соединений (для быстрого старта)
+	cfg.MaxConnLifetime = time.Hour                 // Время жизни соединения
+	cfg.MaxConnIdleTime = time.Minute * 30          // Время простоя соединения
+	cfg.HealthCheckPeriod = time.Minute             // Период проверки здоровья соединений
+	cfg.ConnConfig.ConnectTimeout = time.Second * 5 // Таймаут подключения
+
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect db: %w", err)
+	}
+
+	// Проверяем соединение
+	if err := pool.Ping(ctx); err != nil {
+		return nil, fmt.Errorf("ping db: %w", err)
 	}
 
 	// Простые миграции (CREATE TABLE IF NOT EXISTS)
@@ -291,6 +304,37 @@ CREATE TABLE IF NOT EXISTS ambulatory_cards (
 		return nil, fmt.Errorf("create index ambulatory_cards_contract: %w", err)
 	}
 
+	// Дополнительные индексы для производительности
+	_, err = tx.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_users_bin ON users(bin) WHERE bin IS NOT NULL;`)
+	if err != nil {
+		return nil, fmt.Errorf("create index users_bin: %w", err)
+	}
+
+	_, err = tx.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);`)
+	if err != nil {
+		return nil, fmt.Errorf("create index users_role: %w", err)
+	}
+
+	_, err = tx.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_contracts_client_bin ON contracts(client_bin);`)
+	if err != nil {
+		return nil, fmt.Errorf("create index contracts_client_bin: %w", err)
+	}
+
+	_, err = tx.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_contracts_clinic_bin ON contracts(clinic_bin);`)
+	if err != nil {
+		return nil, fmt.Errorf("create index contracts_clinic_bin: %w", err)
+	}
+
+	_, err = tx.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_contracts_status ON contracts(status);`)
+	if err != nil {
+		return nil, fmt.Errorf("create index contracts_status: %w", err)
+	}
+
+	_, err = tx.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_doctors_clinic_uid ON doctors(clinic_uid);`)
+	if err != nil {
+		return nil, fmt.Errorf("create index doctors_clinic_uid: %w", err)
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit migrations: %w", err)
 	}
@@ -313,7 +357,10 @@ func getUserByPhoneHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
+	// Контекст с таймаутом для быстрого ответа
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
 	row := db.QueryRow(ctx, `
 SELECT id, role, bin, company_name, leader_name, phone, created_at, doctor_id, clinic_id, specialty, clinic_bin, employee_id, contract_id
 FROM users WHERE phone = $1
@@ -338,7 +385,10 @@ func getUserByBinHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
+	// Контекст с таймаутом для быстрого ответа
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
 	// Ищем пользователя с нужной ролью (clinic или organization) и нужным BIN
 	row := db.QueryRow(ctx, `
 SELECT id, role, bin, company_name, leader_name, phone, created_at, doctor_id, clinic_id, specialty, clinic_bin, employee_id, contract_id
@@ -366,7 +416,10 @@ func getUserByUidHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
+	// Контекст с таймаутом для быстрого ответа
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
 	row := db.QueryRow(ctx, `
 SELECT id, role, bin, company_name, leader_name, phone, created_at, doctor_id, clinic_id, specialty, clinic_bin, employee_id, contract_id
 FROM users 
@@ -397,7 +450,10 @@ func createUserHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
+	// Контекст с таймаутом для быстрого ответа
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
 	_, err := db.Exec(ctx, `
 INSERT INTO users (id, role, bin, company_name, leader_name, phone, doctor_id, clinic_id, specialty, clinic_bin, employee_id, contract_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
@@ -431,7 +487,10 @@ func listContractsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
+	// Контекст с таймаутом для быстрого ответа
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
 	rows, err := db.Query(ctx, `
 SELECT id, number, client_name, client_bin, client_signed,
        clinic_name, clinic_bin, clinic_signed,
@@ -511,7 +570,10 @@ func createContractHandler(w http.ResponseWriter, r *http.Request) {
 		in.Status = "request"
 	}
 
-	ctx := r.Context()
+	// Контекст с таймаутом для быстрого ответа
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
 	var id int64
 	err := db.QueryRow(ctx, `
 INSERT INTO contracts (
@@ -557,7 +619,9 @@ func updateContractHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
+	// Контекст с таймаутом для быстрого ответа
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
 
 	// Обновляем только поля, которые реально используются сейчас (status, employees, documents, calendarPlan, clientSigned, clinicSigned, clientSignOtp, clinicSignOtp, number)
 	if v, ok := patch["calendarPlan"]; ok {
@@ -630,7 +694,10 @@ func getContractHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
+	// Контекст с таймаутом для быстрого ответа
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
 	row := db.QueryRow(ctx, `
 SELECT id, number, client_name, client_bin, client_signed,
        clinic_name, clinic_bin, clinic_signed,
@@ -695,7 +762,10 @@ func listDoctorsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
+	// Контекст с таймаутом для быстрого ответа
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
 	rows, err := db.Query(ctx, `
 SELECT id, clinic_uid, name, specialty, phone, is_chairman
 FROM doctors
@@ -756,7 +826,10 @@ func createDoctorHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
+	// Контекст с таймаутом для быстрого ответа
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
 	var id int64
 	err = db.QueryRow(ctx, `
 INSERT INTO doctors (clinic_uid, name, specialty, phone, is_chairman)
@@ -815,7 +888,10 @@ func updateDoctorHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
+	// Контекст с таймаутом для быстрого ответа
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
 	_, err = db.Exec(ctx, `
 UPDATE doctors
 SET name = $1, specialty = $2, phone = $3, is_chairman = $4
@@ -861,7 +937,9 @@ func deleteDoctorHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
+	// Контекст с таймаутом для быстрого ответа
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
 
 	// Сначала получаем информацию о враче для удаления связанного пользователя
 	var doctorPhone *string
@@ -998,7 +1076,10 @@ func createRouteSheetHandler(w http.ResponseWriter, r *http.Request) {
 
 	employeesJSON, _ := json.Marshal(in.Employees)
 
-	ctx := r.Context()
+	// Контекст с таймаутом для быстрого ответа
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
 	var id int64
 	err := db.QueryRow(ctx, `
 INSERT INTO route_sheets (doctor_id, contract_id, specialty, virtual_doctor, employees)
@@ -1034,7 +1115,9 @@ func updateRouteSheetHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
+	// Контекст с таймаутом для быстрого ответа
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
 
 	if v, ok := patch["employees"]; ok {
 		b, _ := json.Marshal(v)
@@ -1068,7 +1151,10 @@ func getAmbulatoryCardHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
+	// Контекст с таймаутом для быстрого ответа
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
 	// Используем LIMIT 1 на случай, если есть дубликаты (хотя UNIQUE constraint должен предотвращать это)
 	row := db.QueryRow(ctx, `
 SELECT id, employee_id, contract_id, card_number, personal_info, anamnesis, vitals, lab_tests, examinations, final_conclusion, created_at, updated_at
@@ -1152,7 +1238,10 @@ func listAmbulatoryCardsByContractHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ctx := r.Context()
+	// Контекст с таймаутом для быстрого ответа
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
 	rows, err := db.Query(ctx, `
 SELECT id, employee_id, contract_id, card_number, personal_info, anamnesis, vitals, lab_tests, examinations, final_conclusion, created_at, updated_at
 FROM ambulatory_cards
@@ -1245,7 +1334,10 @@ func createAmbulatoryCardHandler(w http.ResponseWriter, r *http.Request) {
 	examinationsJSON, _ := json.Marshal(in.Examinations)
 	finalConclusionJSON, _ := json.Marshal(in.FinalConclusion)
 
-	ctx := r.Context()
+	// Контекст с таймаутом для быстрого ответа
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
 	var id int64
 	err := db.QueryRow(ctx, `
 INSERT INTO ambulatory_cards (employee_id, contract_id, card_number, personal_info, anamnesis, vitals, lab_tests, examinations, final_conclusion)
@@ -1286,7 +1378,9 @@ func updateAmbulatoryCardHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
+	// Контекст с таймаутом для быстрого ответа
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
 
 	log.Printf("updateAmbulatoryCard: id=%d, patch keys=%v", id, func() []string {
 		keys := make([]string, 0, len(patch))
@@ -1561,9 +1655,18 @@ func main() {
 		mux.ServeHTTP(w, r)
 	})
 
-	addr := ":8080"
-	log.Printf("Go API listening on %s", addr)
-	if err := http.ListenAndServe(addr, handler); err != nil {
+	// Настройка HTTP сервера для производительности
+	server := &http.Server{
+		Addr:           ":8080",
+		Handler:        handler,
+		ReadTimeout:    15 * time.Second, // Таймаут чтения запроса
+		WriteTimeout:   15 * time.Second, // Таймаут записи ответа
+		IdleTimeout:    60 * time.Second, // Таймаут простоя соединения
+		MaxHeaderBytes: 1 << 20,          // Максимальный размер заголовков (1MB)
+	}
+
+	log.Printf("Go API listening on %s (optimized for concurrency)", server.Addr)
+	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
 }

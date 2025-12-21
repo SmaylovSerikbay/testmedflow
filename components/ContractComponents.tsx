@@ -5,7 +5,6 @@ import { LoaderIcon, PenIcon, CalendarIcon, CheckShieldIcon, FileTextIcon, FileS
 import { FACTOR_RULES, FactorRule } from '../factorRules';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
-import { rtdb, ref, set, get } from '../services/firebase';
 import { 
   generateClinicRouteSheetPDF, 
   generateOrganizationRouteSheetPDF, 
