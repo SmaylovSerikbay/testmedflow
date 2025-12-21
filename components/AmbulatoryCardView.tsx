@@ -1,8 +1,6 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { AmbulatoryCard, Contract, Doctor } from '../types';
-import { FileTextIcon, CheckShieldIcon, AlertCircleIcon, ClockIcon, EyeIcon } from './Icons';
-import Form052Editor from './Form052Editor';
-import { Form052Data } from '../types/form052';
+import { FileTextIcon, CheckShieldIcon, AlertCircleIcon, ClockIcon } from './Icons';
 
 interface AmbulatoryCardViewProps {
   card: AmbulatoryCard;
@@ -11,8 +9,6 @@ interface AmbulatoryCardViewProps {
 }
 
 const AmbulatoryCardView: React.FC<AmbulatoryCardViewProps> = ({ card, contract, doctors }) => {
-  const [showForm052, setShowForm052] = useState(false);
-  
   // Проверяем, что карта имеет необходимую структуру
   if (!card || !card.personalInfo) {
     return (
@@ -24,53 +20,6 @@ const AmbulatoryCardView: React.FC<AmbulatoryCardViewProps> = ({ card, contract,
       </div>
     );
   }
-  
-  // Преобразуем данные амбулаторной карты в формат формы 052
-  const convertToForm052Data = (): Form052Data => {
-    // Находим последний завершенный осмотр для заполнения "Динамического наблюдения"
-    const completedExams = Object.entries(card.examinations).filter(([_, exam]: [string, any]) => exam.status === 'completed');
-    const lastExam = completedExams.length > 0 ? completedExams[completedExams.length - 1][1] : null;
-    
-    return {
-      passportData: {
-        iin: card.personalInfo?.iin || '',
-        fullName: card.personalInfo?.fullName || '',
-        dateOfBirth: card.personalInfo?.dateOfBirth || '',
-        gender: card.personalInfo?.gender === 'М' ? 'male' : 'female',
-        address: card.personalInfo?.address || '',
-        workplace: card.personalInfo?.workplace || '',
-        position: card.personalInfo?.position || '',
-      },
-      minimalMedicalData: {
-        bloodGroup: card.personalInfo?.bloodType || '',
-        rhFactor: card.personalInfo?.rhFactor || '',
-        // Загружаем данные из anamnesis
-        diseaseHistory: card.anamnesis?.chronicDiseases || card.anamnesis?.pastDiseases || card.anamnesis?.heredity,
-        harmfulHabits: card.anamnesis?.badHabits,
-        allergicReactions: card.anamnesis?.allergies ? card.anamnesis.allergies.split(', ').map((name: string) => ({ name: name.trim() })) : undefined,
-        // Загружаем данные из vitals
-        anthropometricData: card.vitals ? {
-          height: card.vitals.height,
-          weight: card.vitals.weight,
-          bmi: card.vitals.bmi,
-          headCircumference: card.vitals.headCircumference,
-        } : undefined,
-      },
-      cardNumber: card.cardNumber,
-      dynamicObservation: lastExam ? {
-        treatedCase: {
-          anamnesis: lastExam.complaints || '',
-          diseaseAnamnesis: lastExam.complaints || '',
-          objectiveData: lastExam.objectiveExamination || '',
-          diagnosis: typeof lastExam.diagnosis === 'string' ? { name: lastExam.diagnosis } : lastExam.diagnosis || {},
-          consultations: lastExam.conclusion || '',
-          prescribedServices: lastExam.recommendations || '',
-          doctorId: lastExam.doctorId,
-          doctorFullName: lastExam.doctorName || '',
-        }
-      } : undefined,
-    };
-  };
   
   const getDoctorName = (specialty: string) => {
     const doctor = doctors.find(d => d.specialty === specialty);
@@ -129,24 +78,15 @@ const AmbulatoryCardView: React.FC<AmbulatoryCardViewProps> = ({ card, contract,
 
   return (
     <div className="space-y-6">
-      {/* Заголовок с кнопкой печати */}
+      {/* Заголовок */}
       <div className="bg-white rounded-2xl border border-slate-200 p-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-2xl font-bold text-slate-900 mb-2">
-              Медицинская карта № {card.cardNumber || '—'}
-            </h2>
-            <p className="text-sm text-slate-600">
-              Форма № 052/у • Создана {formatDate(card.createdAt)}
-            </p>
-          </div>
-          <button
-            onClick={() => setShowForm052(true)}
-            className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-all"
-          >
-            <EyeIcon className="w-5 h-5" />
-            Просмотр формы 052/у
-          </button>
+        <div>
+          <h2 className="text-2xl font-bold text-slate-900 mb-2">
+            Форма № 052/у — Медицинская карта амбулаторного пациента
+          </h2>
+          <p className="text-sm text-slate-600">
+            Номер карты: {card.cardNumber || '—'} • Создана {formatDate(card.createdAt)}
+          </p>
         </div>
 
         {/* Прогресс осмотров */}
@@ -397,34 +337,6 @@ const AmbulatoryCardView: React.FC<AmbulatoryCardViewProps> = ({ card, contract,
               <p className="text-sm text-slate-500 mb-1">Председатель комиссии</p>
               <p className="text-base font-medium text-slate-900">{card.finalConclusion.doctorName || getDoctorName('Профпатолог')}</p>
               <p className="text-xs text-slate-500 mt-1">Дата: {formatDate(card.finalConclusion.date)}</p>
-            </div>
-          </div>
-        </div>
-      )}
-      
-      {/* Модальное окно для просмотра формы 052 */}
-      {showForm052 && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 overflow-y-auto">
-          <div className="min-h-screen px-4 py-8">
-            <div className="max-w-6xl mx-auto bg-white rounded-2xl shadow-xl">
-              <div className="sticky top-0 bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between z-10">
-                <div>
-                  <h2 className="text-xl font-bold text-slate-900">Форма 052/у - Медицинская карта амбулаторного пациента</h2>
-                  <p className="text-sm text-slate-600 mt-1">{card.personalInfo?.fullName} • {card.personalInfo?.position}</p>
-                </div>
-                <button
-                  onClick={() => setShowForm052(false)}
-                  className="px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
-                >
-                  Закрыть
-                </button>
-              </div>
-              <div className="p-6">
-                <Form052Editor
-                  initialData={convertToForm052Data()}
-                  mode="view"
-                />
-              </div>
             </div>
           </div>
         </div>
