@@ -265,6 +265,7 @@ export interface Doctor {
   specialty: string;
   phone?: string; // Номер телефона для создания аккаунта врача
   isChairman?: boolean;
+  roomNumber?: string; // Номер кабинета (может меняться каждый день)
 }
 
 export interface GroundingChunk {

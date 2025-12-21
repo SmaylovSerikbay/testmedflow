@@ -616,126 +616,186 @@ const DoctorWorkspace: React.FC<DoctorWorkspaceProps> = ({ currentUser }) => {
             )}
           </div>
 
-          {/* Правая панель: Форма осмотра (65%) */}
+          {/* Правая панель: Амбулаторная карта (форма 052) (65%) */}
           <div className="xl:col-span-8">
             {selectedEmployee && ambulatoryCard ? (
-              <div className="bg-white/90 backdrop-blur-sm rounded-2xl border border-slate-200/50 shadow-sm overflow-hidden">
-                <div className="p-6 border-b border-slate-100 bg-gradient-to-r from-blue-50/50 to-slate-50/50">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <h2 className="text-2xl font-bold text-slate-900 mb-1">{selectedEmployee.name}</h2>
-                      <p className="text-sm text-slate-600">{selectedEmployee.position}</p>
-                      {selectedEmployee.harmfulFactor && (
-                        <p className="text-xs text-amber-600 mt-2 font-medium">
-                          Вредные факторы: {selectedEmployee.harmfulFactor}
-                        </p>
-                      )}
+              <div className="space-y-4">
+                {/* Заголовок пациента */}
+                <div className="bg-white/90 backdrop-blur-sm rounded-2xl border border-slate-200/50 shadow-sm overflow-hidden">
+                  <div className="p-6 border-b border-slate-100 bg-gradient-to-r from-blue-50/50 to-slate-50/50">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <h2 className="text-2xl font-bold text-slate-900 mb-1">{selectedEmployee.name}</h2>
+                        <p className="text-sm text-slate-600">{selectedEmployee.position}</p>
+                        {selectedEmployee.harmfulFactor && (
+                          <p className="text-xs text-amber-600 mt-2 font-medium">
+                            Вредные факторы: {selectedEmployee.harmfulFactor}
+                          </p>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs text-slate-500">Форма № 025/у</p>
+                        <p className="text-sm font-bold text-slate-900">Амбулаторная карта</p>
+                      </div>
                     </div>
                   </div>
                 </div>
-                <div className="p-6 space-y-5">
-                  {/* Форма осмотра */}
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-bold text-slate-700 mb-2">
-                        Жалобы
-                      </label>
-                      <textarea
-                        value={examinationForm.complaints}
-                        onChange={(e) => setExaminationForm({ ...examinationForm, complaints: e.target.value })}
-                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
-                        rows={3}
-                        placeholder="Жалобы пациента..."
-                      />
-                    </div>
 
-                    <div>
-                      <label className="block text-sm font-bold text-slate-700 mb-2">
-                        Объективный осмотр
-                      </label>
-                      <textarea
-                        value={examinationForm.objectiveExamination}
-                        onChange={(e) => setExaminationForm({ ...examinationForm, objectiveExamination: e.target.value })}
-                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
-                        rows={4}
-                        placeholder="Результаты объективного осмотра..."
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Амбулаторная карта с формой осмотра */}
+                <div className="bg-white/90 backdrop-blur-sm rounded-2xl border border-slate-200/50 shadow-sm overflow-hidden">
+                  <div className="p-6 border-b border-slate-100 bg-gradient-to-r from-slate-50/50 to-blue-50/50">
+                    <h3 className="text-lg font-bold text-slate-900">
+                      Осмотр: {currentUser.specialty}
+                    </h3>
+                  </div>
+                  <div className="p-6 space-y-5">
+                    {/* Форма осмотра */}
+                    <div className="space-y-4">
                       <div>
                         <label className="block text-sm font-bold text-slate-700 mb-2">
-                          Диагноз
+                          Жалобы
                         </label>
-                        <input
-                          type="text"
-                          value={examinationForm.diagnosis}
-                          onChange={(e) => setExaminationForm({ ...examinationForm, diagnosis: e.target.value })}
+                        <textarea
+                          value={examinationForm.complaints}
+                          onChange={(e) => setExaminationForm({ ...examinationForm, complaints: e.target.value })}
                           className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
-                          placeholder="Диагноз..."
+                          rows={3}
+                          placeholder="Жалобы пациента..."
                         />
                       </div>
 
                       <div>
                         <label className="block text-sm font-bold text-slate-700 mb-2">
-                          Заключение
+                          Объективный осмотр
                         </label>
-                        <input
-                          type="text"
-                          value={examinationForm.conclusion}
-                          onChange={(e) => setExaminationForm({ ...examinationForm, conclusion: e.target.value })}
+                        <textarea
+                          value={examinationForm.objectiveExamination}
+                          onChange={(e) => setExaminationForm({ ...examinationForm, objectiveExamination: e.target.value })}
                           className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
-                          placeholder="Заключение..."
+                          rows={4}
+                          placeholder="Результаты объективного осмотра..."
                         />
                       </div>
-                    </div>
 
-                    <div>
-                      <label className="block text-sm font-bold text-slate-700 mb-2">
-                        Рекомендации
-                      </label>
-                      <textarea
-                        value={examinationForm.recommendations}
-                        onChange={(e) => setExaminationForm({ ...examinationForm, recommendations: e.target.value })}
-                        className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
-                        rows={2}
-                        placeholder="Рекомендации..."
-                      />
-                    </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-bold text-slate-700 mb-2">
+                            Диагноз
+                          </label>
+                          <input
+                            type="text"
+                            value={examinationForm.diagnosis}
+                            onChange={(e) => setExaminationForm({ ...examinationForm, diagnosis: e.target.value })}
+                            className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
+                            placeholder="Диагноз..."
+                          />
+                        </div>
 
-                    <div className="flex items-center gap-4 p-4 bg-slate-50/50 rounded-xl border-2 border-slate-200">
-                      <label className="flex items-center gap-3 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={examinationForm.isFit}
-                          onChange={(e) => setExaminationForm({ ...examinationForm, isFit: e.target.checked })}
-                          className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500 border-slate-300"
+                        <div>
+                          <label className="block text-sm font-bold text-slate-700 mb-2">
+                            Заключение
+                          </label>
+                          <input
+                            type="text"
+                            value={examinationForm.conclusion}
+                            onChange={(e) => setExaminationForm({ ...examinationForm, conclusion: e.target.value })}
+                            className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
+                            placeholder="Заключение..."
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-bold text-slate-700 mb-2">
+                          Рекомендации
+                        </label>
+                        <textarea
+                          value={examinationForm.recommendations}
+                          onChange={(e) => setExaminationForm({ ...examinationForm, recommendations: e.target.value })}
+                          className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
+                          rows={2}
+                          placeholder="Рекомендации..."
                         />
-                        <span className="text-sm font-bold text-slate-700">
-                          Годен к работе по специальности
-                        </span>
-                      </label>
-                    </div>
+                      </div>
 
-                    <button
-                      onClick={handleSaveExamination}
-                      disabled={isSaving}
-                      className="group relative w-full py-4 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-xl font-bold hover:from-blue-700 hover:to-blue-600 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
-                    >
-                      {isSaving ? (
-                        <>
-                          <LoaderIcon className="w-5 h-5 animate-spin" />
-                          Сохранение...
-                        </>
-                      ) : (
-                        <>
-                          <CheckShieldIcon className="w-5 h-5" />
-                          Сохранить осмотр
-                        </>
-                      )}
-                    </button>
+                      <div className="flex items-center gap-4 p-4 bg-slate-50/50 rounded-xl border-2 border-slate-200">
+                        <label className="flex items-center gap-3 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={examinationForm.isFit}
+                            onChange={(e) => setExaminationForm({ ...examinationForm, isFit: e.target.checked })}
+                            className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500 border-slate-300"
+                          />
+                          <span className="text-sm font-bold text-slate-700">
+                            Годен к работе по специальности
+                          </span>
+                        </label>
+                      </div>
+
+                      <button
+                        onClick={handleSaveExamination}
+                        disabled={isSaving}
+                        className="group relative w-full py-4 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-xl font-bold hover:from-blue-700 hover:to-blue-600 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
+                      >
+                        {isSaving ? (
+                          <>
+                            <LoaderIcon className="w-5 h-5 animate-spin" />
+                            Сохранение в карту...
+                          </>
+                        ) : (
+                          <>
+                            <CheckShieldIcon className="w-5 h-5" />
+                            Сохранить в амбулаторную карту (форма 052)
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
                 </div>
+
+                {/* Предыдущие осмотры */}
+                {ambulatoryCard.examinations && Object.keys(ambulatoryCard.examinations).length > 0 && (
+                  <div className="bg-white/90 backdrop-blur-sm rounded-2xl border border-slate-200/50 shadow-sm overflow-hidden">
+                    <div className="p-6 border-b border-slate-100 bg-gradient-to-r from-slate-50/50 to-blue-50/50">
+                      <h3 className="text-lg font-bold text-slate-900">
+                        История осмотров в карте
+                      </h3>
+                    </div>
+                    <div className="p-6">
+                      <div className="space-y-3">
+                        {Object.entries(ambulatoryCard.examinations).map(([specialty, exam]: [string, any]) => (
+                          <div key={specialty} className="p-4 bg-slate-50/50 rounded-xl border border-slate-200">
+                            <div className="flex items-start justify-between mb-2">
+                              <h4 className="font-bold text-slate-900">{specialty}</h4>
+                              <span className="text-xs text-slate-500">
+                                {exam.date ? new Date(exam.date).toLocaleDateString('ru-RU') : ''}
+                              </span>
+                            </div>
+                            {exam.diagnosis && (
+                              <p className="text-sm text-slate-700 mb-1">
+                                <span className="font-semibold">Диагноз:</span> {exam.diagnosis}
+                              </p>
+                            )}
+                            {exam.conclusion && (
+                              <p className="text-sm text-slate-700">
+                                <span className="font-semibold">Заключение:</span> {exam.conclusion}
+                              </p>
+                            )}
+                            {exam.isFit !== undefined && (
+                              <div className="mt-2">
+                                <span className={`px-2 py-1 rounded text-xs font-bold ${
+                                  exam.isFit ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                                }`}>
+                                  {exam.isFit ? 'Годен' : 'Не годен'}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="bg-white/90 backdrop-blur-sm rounded-2xl border border-slate-200/50 shadow-sm overflow-hidden">

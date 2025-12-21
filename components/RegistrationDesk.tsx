@@ -378,8 +378,40 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
     }
   };
 
-  // Выдача документов
-  const handleIssueDocument = async (documentType: string) => {
+  // Обновление маршрута с номерами кабинетов
+  const updateRouteWithRoomNumbers = async () => {
+    if (!employeeRoute || !selectedEmployee) return;
+    
+    // Обновляем маршрут с актуальными номерами кабинетов
+    const updatedRouteItems = employeeRoute.routeItems.map(item => {
+      const doctor = doctors.find(d => d.id === item.doctorId);
+      return {
+        ...item,
+        roomNumber: doctor?.roomNumber,
+        doctorName: doctor?.name,
+      };
+    });
+
+    setEmployeeRoute({
+      ...employeeRoute,
+      routeItems: updatedRouteItems,
+    });
+    
+    // Отправляем уведомление сотруднику
+    const { notificationService } = await import('../services/notificationService');
+    await notificationService.notifyRouteUpdated(
+      selectedEmployee.id,
+      selectedEmployee.name,
+      currentUser.companyName || 'Регистратура',
+      {
+        route: updatedRouteItems,
+        clinicName: currentUser.clinicName,
+      }
+    );
+  };
+
+  // Выдача направлений
+  const handleIssueReferral = async (referralType: string) => {
     if (!employeeVisit || !selectedEmployee || !selectedContract) return;
     setIsRegistering(true);
 
@@ -387,19 +419,10 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
       const visitId = parseInt(employeeVisit.id, 10);
       if (isNaN(visitId)) return;
 
-      if (documentType === 'Маршрутный лист') {
-        const { generateEmployeeRouteSheetPDF } = await import('../utils/pdfGenerator');
-        const doc = generateEmployeeRouteSheetPDF(
-          selectedEmployee,
-          selectedContract,
-          employeeRoute,
-          doctors
-        );
-        const filename = `Маршрутный_лист_${selectedEmployee.name.replace(/\s+/g, '_')}.pdf`;
-        doc.save(filename);
-      }
-
-      const updatedDocuments = [...(employeeVisit.documentsIssued || []), documentType];
+      // Генерируем направление
+      const referralText = `Направление на ${referralType}\n\nПациент: ${selectedEmployee.name}\nОрганизация: ${selectedContract.clientName}\nДата: ${new Date().toLocaleDateString('ru-RU')}`;
+      
+      const updatedDocuments = [...(employeeVisit.documentsIssued || []), `Направление: ${referralType}`];
       
       await apiUpdateEmployeeVisit(visitId, {
         documentsIssued: updatedDocuments,
@@ -412,12 +435,19 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
       
       setEmployeeVisit(updatedVisit);
       
-      if (documentType === 'Маршрутный лист') {
-        alert('Маршрутный лист успешно сгенерирован и сохранен');
-      }
+      // Отправляем уведомление
+      const { notificationService } = await import('../services/notificationService');
+      await notificationService.notifyDocumentIssued(
+        selectedEmployee.id,
+        `Направление на ${referralType}`,
+        currentUser.companyName || 'Регистратура',
+        { referralText, type: referralType }
+      );
+      
+      alert(`Направление на ${referralType} выдано успешно`);
     } catch (error) {
-      console.error('Error issuing document:', error);
-      alert('Ошибка при выдаче документа');
+      console.error('Error issuing referral:', error);
+      alert('Ошибка при выдаче направления');
     } finally {
       setIsRegistering(false);
     }
@@ -947,23 +977,50 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
                           <p className="text-sm font-medium text-slate-500">Документы не выданы</p>
                         </div>
                       )}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-3">
                         <button
-                          onClick={() => handleIssueDocument('Направление на анализы')}
+                          onClick={updateRouteWithRoomNumbers}
                           disabled={isRegistering}
-                          className="group relative inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-xl font-bold hover:from-blue-700 hover:to-blue-600 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="w-full group relative inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-xl font-bold hover:from-blue-700 hover:to-blue-600 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          <FileTextIcon className="w-4 h-4" />
-                          <span>Выдать направление</span>
+                          <RefreshIcon className="w-4 h-4" />
+                          <span>Обновить маршрут (отправить пациенту)</span>
                         </button>
-                        <button
-                          onClick={() => handleIssueDocument('Маршрутный лист')}
-                          disabled={isRegistering}
-                          className="group relative inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-green-600 to-green-500 text-white rounded-xl font-bold hover:from-green-700 hover:to-green-600 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          <DownloadIcon className="w-4 h-4" />
-                          <span>Маршрутный лист</span>
-                        </button>
+                        
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <button
+                            onClick={() => handleIssueReferral('Лабораторные анализы')}
+                            disabled={isRegistering}
+                            className="group relative inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-purple-600 to-purple-500 text-white rounded-xl font-bold hover:from-purple-700 hover:to-purple-600 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <FileTextIcon className="w-4 h-4" />
+                            <span>Направление: Анализы</span>
+                          </button>
+                          <button
+                            onClick={() => handleIssueReferral('Флюорография')}
+                            disabled={isRegistering}
+                            className="group relative inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-purple-600 to-purple-500 text-white rounded-xl font-bold hover:from-purple-700 hover:to-purple-600 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <FileTextIcon className="w-4 h-4" />
+                            <span>Направление: ФЛГ</span>
+                          </button>
+                          <button
+                            onClick={() => handleIssueReferral('ЭКГ')}
+                            disabled={isRegistering}
+                            className="group relative inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-purple-600 to-purple-500 text-white rounded-xl font-bold hover:from-purple-700 hover:to-purple-600 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <FileTextIcon className="w-4 h-4" />
+                            <span>Направление: ЭКГ</span>
+                          </button>
+                          <button
+                            onClick={() => handleIssueReferral('Другое исследование')}
+                            disabled={isRegistering}
+                            className="group relative inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-purple-600 to-purple-500 text-white rounded-xl font-bold hover:from-purple-700 hover:to-purple-600 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <FileTextIcon className="w-4 h-4" />
+                            <span>Направление: Другое</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
