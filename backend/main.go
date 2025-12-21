@@ -76,12 +76,13 @@ type Contract struct {
 
 // Doctor belongs to clinic (clinic_uid from users.id with role=clinic)
 type Doctor struct {
-	ID         int64  `json:"id"`
-	ClinicUID  string `json:"clinicUid"`
-	Name       string `json:"name"`
-	Specialty  string `json:"specialty"`
-	Phone      string `json:"phone,omitempty"`
-	IsChairman bool   `json:"isChairman"`
+	ID         int64   `json:"id"`
+	ClinicUID  string  `json:"clinicUid"`
+	Name       string  `json:"name"`
+	Specialty  string  `json:"specialty"`
+	Phone      string  `json:"phone,omitempty"`
+	IsChairman bool    `json:"isChairman"`
+	RoomNumber *string `json:"roomNumber,omitempty"` // Номер кабинета (может меняться)
 }
 
 // RouteSheetEmployee represents an employee in a route sheet
@@ -240,7 +241,8 @@ CREATE TABLE IF NOT EXISTS doctors (
   name         TEXT NOT NULL,
   specialty    TEXT NOT NULL,
   phone        TEXT,
-  is_chairman  BOOLEAN NOT NULL DEFAULT FALSE
+  is_chairman  BOOLEAN NOT NULL DEFAULT FALSE,
+  room_number  TEXT
 );
 `)
 	if err != nil {
@@ -869,7 +871,7 @@ func listDoctorsHandler(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	rows, err := db.Query(ctx, `
-SELECT id, clinic_uid, name, specialty, phone, is_chairman
+SELECT id, clinic_uid, name, specialty, phone, is_chairman, room_number
 FROM doctors
 WHERE clinic_uid = $1
 ORDER BY name
@@ -884,7 +886,7 @@ ORDER BY name
 	var res []Doctor
 	for rows.Next() {
 		var d Doctor
-		if err := rows.Scan(&d.ID, &d.ClinicUID, &d.Name, &d.Specialty, &d.Phone, &d.IsChairman); err != nil {
+		if err := rows.Scan(&d.ID, &d.ClinicUID, &d.Name, &d.Specialty, &d.Phone, &d.IsChairman, &d.RoomNumber); err != nil {
 			log.Printf("scan doctor: %v", err)
 			continue
 		}
@@ -934,10 +936,10 @@ func createDoctorHandler(w http.ResponseWriter, r *http.Request) {
 
 	var id int64
 	err = db.QueryRow(ctx, `
-INSERT INTO doctors (clinic_uid, name, specialty, phone, is_chairman)
-VALUES ($1,$2,$3,$4,$5)
+INSERT INTO doctors (clinic_uid, name, specialty, phone, is_chairman, room_number)
+VALUES ($1,$2,$3,$4,$5,$6)
 RETURNING id
-`, clinicUID, in.Name, in.Specialty, in.Phone, in.IsChairman).Scan(&id)
+`, clinicUID, in.Name, in.Specialty, in.Phone, in.IsChairman, in.RoomNumber).Scan(&id)
 	if err != nil {
 		log.Printf("createDoctor error: %v", err)
 		errorResponse(w, http.StatusInternalServerError, "db error")
@@ -996,9 +998,9 @@ func updateDoctorHandler(w http.ResponseWriter, r *http.Request) {
 
 	_, err = db.Exec(ctx, `
 UPDATE doctors
-SET name = $1, specialty = $2, phone = $3, is_chairman = $4
-WHERE id = $5 AND clinic_uid = $6
-`, in.Name, in.Specialty, in.Phone, in.IsChairman, id, clinicUID)
+SET name = $1, specialty = $2, phone = $3, is_chairman = $4, room_number = $5
+WHERE id = $6 AND clinic_uid = $7
+`, in.Name, in.Specialty, in.Phone, in.IsChairman, in.RoomNumber, id, clinicUID)
 	if err != nil {
 		log.Printf("updateDoctor error: %v", err)
 		errorResponse(w, http.StatusInternalServerError, "db error")
