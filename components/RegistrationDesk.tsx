@@ -81,9 +81,18 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
           calendarPlan: c.calendarPlan,
         }));
         
-        setContracts(contractsData.filter(c => c.status === 'execution' || c.status === 'planning'));
-        if (contractsData.length > 0) {
-          setSelectedContract(contractsData[0]);
+        // Показываем все договоры, кроме черновиков
+        const activeContracts = contractsData.filter(c => 
+          c.status === 'execution' || 
+          c.status === 'planning' || 
+          c.status === 'negotiation' ||
+          c.status === 'request'
+        );
+        setContracts(activeContracts);
+        if (activeContracts.length > 0 && !selectedContract) {
+          // Выбираем договор в статусе исполнения, если есть, иначе первый
+          const executionContract = activeContracts.find(c => c.status === 'execution');
+          setSelectedContract(executionContract || activeContracts[0]);
         }
       } catch (error) {
         console.error('Error loading contracts:', error);
@@ -601,23 +610,31 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
                     Договор
                   </label>
                 </div>
-                <select
-                  value={selectedContract?.id || ''}
-                  onChange={(e) => {
-                    const contract = contracts.find(c => c.id === e.target.value);
-                    setSelectedContract(contract || null);
-                    setSelectedEmployee(null);
-                    setEmployeeVisit(null);
-                    setEmployeeRoute(null);
-                  }}
-                  className="w-full px-3 py-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-medium bg-white"
-                >
-                  {contracts.map(contract => (
-                    <option key={contract.id} value={contract.id}>
-                      {contract.number} - {contract.clientName}
-                    </option>
-                  ))}
-                </select>
+                {contracts.length === 0 ? (
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                    <p className="text-sm text-amber-800 text-center">
+                      Договоры не найдены. Проверьте, что у клиники есть активные договоры.
+                    </p>
+                  </div>
+                ) : (
+                  <select
+                    value={selectedContract?.id || ''}
+                    onChange={(e) => {
+                      const contract = contracts.find(c => c.id === e.target.value);
+                      setSelectedContract(contract || null);
+                      setSelectedEmployee(null);
+                      setEmployeeVisit(null);
+                      setEmployeeRoute(null);
+                    }}
+                    className="w-full px-3 py-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-medium bg-white"
+                  >
+                    {contracts.map(contract => (
+                      <option key={contract.id} value={contract.id}>
+                        {contract.number} - {contract.clientName}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
               
               {/* Детальная информация о договоре */}
@@ -779,7 +796,6 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
                     </div>
                   </div>
                   <div className="p-6">
-
                     <div className="grid grid-cols-2 gap-4 mb-6">
                       <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
                         <p className="text-xs text-slate-500 mb-1">Дата рождения</p>
@@ -803,35 +819,35 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
                       )}
                     </div>
 
-                  {!employeeVisit && selectedEmployee && (
-                    <button
-                      onClick={() => handleCheckIn(selectedEmployee)}
-                      disabled={isRegistering}
-                      className="group relative w-full py-3.5 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-xl font-semibold hover:from-blue-700 hover:to-blue-600 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                    >
-                      {isRegistering ? (
-                        <>
-                          <LoaderIcon className="w-5 h-5 animate-spin" />
-                          Регистрация...
-                        </>
-                      ) : (
-                        <>
-                          <CheckCircleIcon className="w-5 h-5" />
-                          Зарегистрировать вход
-                        </>
-                      )}
-                    </button>
-                  )}
+                    {!employeeVisit && selectedEmployee && (
+                      <button
+                        onClick={() => handleCheckIn(selectedEmployee)}
+                        disabled={isRegistering}
+                        className="group relative w-full py-3.5 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-xl font-semibold hover:from-blue-700 hover:to-blue-600 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                      >
+                        {isRegistering ? (
+                          <>
+                            <LoaderIcon className="w-5 h-5 animate-spin" />
+                            Регистрация...
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircleIcon className="w-5 h-5" />
+                            Зарегистрировать вход
+                          </>
+                        )}
+                      </button>
+                    )}
 
-                  {employeeVisit && employeeVisit.status === 'in_progress' && (
-                    <button
-                      onClick={handleCheckOut}
-                      className="group relative w-full py-3.5 bg-gradient-to-r from-green-600 to-green-500 text-white rounded-xl font-semibold hover:from-green-700 hover:to-green-600 transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
-                    >
-                      <ArrowRightIcon className="w-5 h-5" />
-                      Зарегистрировать выход
-                    </button>
-                  )}
+                    {employeeVisit && employeeVisit.status === 'in_progress' && (
+                      <button
+                        onClick={handleCheckOut}
+                        className="group relative w-full py-3.5 bg-gradient-to-r from-green-600 to-green-500 text-white rounded-xl font-semibold hover:from-green-700 hover:to-green-600 transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
+                      >
+                        <ArrowRightIcon className="w-5 h-5" />
+                        Зарегистрировать выход
+                      </button>
+                    )}
                   </div>
                 </div>
 

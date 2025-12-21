@@ -61,7 +61,7 @@ const DoctorWorkspace: React.FC<DoctorWorkspaceProps> = ({ currentUser }) => {
 
         const contractsList = await apiListContractsByBin(bin);
         const contractsData: Contract[] = contractsList
-          .filter(c => c.status === 'execution' || c.status === 'planning')
+          .filter(c => c.status === 'execution' || c.status === 'planning' || c.status === 'negotiation' || c.status === 'request')
           .map(c => ({
             id: String(c.id),
             number: c.number,
@@ -97,14 +97,21 @@ const DoctorWorkspace: React.FC<DoctorWorkspaceProps> = ({ currentUser }) => {
   // Загрузка маршрутного листа
   useEffect(() => {
     const loadRouteSheet = async () => {
-      if (!selectedContract || !currentUser.doctorId) return;
+      if (!selectedContract || !currentUser.doctorId) {
+        setRouteSheet(null);
+        return;
+      }
 
       try {
         const contractIdNum = parseInt(selectedContract.id, 10);
         if (isNaN(contractIdNum)) return;
 
         const apiSheets = await apiListRouteSheets({ contractId: contractIdNum });
-        const mySheet = apiSheets.find(s => s.doctorId === currentUser.doctorId);
+        // Ищем маршрутный лист по doctorId или по specialty (для виртуальных врачей)
+        const mySheet = apiSheets.find(s => 
+          s.doctorId === currentUser.doctorId || 
+          (s.specialty === currentUser.specialty && s.virtualDoctor)
+        );
         
         if (mySheet) {
           const sheet: DoctorRouteSheet = {
@@ -117,14 +124,21 @@ const DoctorWorkspace: React.FC<DoctorWorkspaceProps> = ({ currentUser }) => {
             createdAt: mySheet.createdAt,
           };
           setRouteSheet(sheet);
+        } else {
+          setRouteSheet(null);
         }
       } catch (error) {
         console.error('Error loading route sheet:', error);
+        setRouteSheet(null);
       }
     };
 
     loadRouteSheet();
-  }, [selectedContract, currentUser.doctorId]);
+    
+    // Автообновление каждые 10 секунд
+    const interval = setInterval(loadRouteSheet, 10000);
+    return () => clearInterval(interval);
+  }, [selectedContract, currentUser.doctorId, currentUser.specialty]);
 
   // Загрузка амбулаторной карты при выборе сотрудника
   useEffect(() => {
