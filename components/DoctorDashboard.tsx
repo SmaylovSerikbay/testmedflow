@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { UserProfile, Contract, Employee, DoctorRouteSheet, DoctorExamination, AmbulatoryCard } from '../types';
+import { Form052Data } from '../types/form052';
 import { FACTOR_RULES, FactorRule } from '../factorRules';
 import { LoaderIcon, UserMdIcon, FileTextIcon, CheckShieldIcon, LogoutIcon, AlertCircleIcon, SearchIcon, FilterIcon, CalendarIcon, ClockIcon } from './Icons';
 import FinalConclusionModal from './FinalConclusionModal';
@@ -959,7 +960,7 @@ const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ currentUser }) => {
               <div>
                 <p className="text-xs text-slate-500 mb-1">Завершены</p>
                 <p className="text-2xl font-bold text-blue-600">
-                  {Object.values(ambulatoryCards).filter(c => c?.finalConclusion).length}
+                  {Object.values(ambulatoryCards as Record<string, AmbulatoryCard>).filter(c => c?.finalConclusion).length}
                 </p>
               </div>
               <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">

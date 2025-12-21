@@ -33,6 +33,10 @@ export interface Employee {
   status: EmployeeStatus;
   phone?: string;                  // Телефон сотрудника (извлекается из note)
   userId?: string;                  // UID пользователя, если зарегистрирован
+  address?: string;
+  workplace?: string;
+  bloodType?: string;
+  rhFactor?: string;
 }
 
 export type EmployeeStatus = 
