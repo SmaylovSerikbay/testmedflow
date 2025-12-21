@@ -17,6 +17,7 @@ import {
   AlertCircleIcon
 } from './Icons';
 import BrandLogo from './BrandLogo';
+import Form052ForProfExam from './Form052ForProfExam';
 import {
   apiListContractsByBin,
   apiListRouteSheets,
