@@ -393,12 +393,25 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
 
   // Выдача документов
   const handleIssueDocument = async (documentType: string) => {
-    if (!employeeVisit) return;
+    if (!employeeVisit || !selectedEmployee || !selectedContract) return;
     setIsRegistering(true);
 
     try {
       const visitId = parseInt(employeeVisit.id, 10);
       if (isNaN(visitId)) return;
+
+      // Если выдается маршрутный лист - генерируем PDF
+      if (documentType === 'Маршрутный лист') {
+        const { generateEmployeeRouteSheetPDF } = await import('../utils/pdfGenerator');
+        const doc = generateEmployeeRouteSheetPDF(
+          selectedEmployee,
+          selectedContract,
+          employeeRoute,
+          doctors
+        );
+        const filename = `Маршрутный_лист_${selectedEmployee.name.replace(/\s+/g, '_')}.pdf`;
+        doc.save(filename);
+      }
 
       const updatedDocuments = [...(employeeVisit.documentsIssued || []), documentType];
       
@@ -412,6 +425,10 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
       };
       
       setEmployeeVisit(updatedVisit);
+      
+      if (documentType === 'Маршрутный лист') {
+        alert('Маршрутный лист успешно сгенерирован и сохранен');
+      }
     } catch (error) {
       console.error('Error issuing document:', error);
       alert('Ошибка при выдаче документа');
@@ -738,58 +755,57 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
             {(selectedEmployee || selectedIndividualPatient) ? (
               <>
                 {/* Информация о сотруднике/пациенте */}
-                <div className="bg-white rounded-xl border border-slate-200 p-6">
-                  <div className="flex items-start justify-between mb-4">
-                    <div>
-                      <h2 className="text-xl font-bold text-slate-900">
-                        {selectedEmployee?.name || selectedIndividualPatient?.fullName}
-                      </h2>
-                      <p className="text-sm text-slate-600 mt-1">
-                        {selectedEmployee?.position || selectedIndividualPatient?.position || 'Индивидуальный пациент'}
-                      </p>
-                    </div>
-                    {employeeVisit && (
-                      <div className="text-right">
-                        <p className="text-sm text-slate-600">Время входа:</p>
-                        <p className="text-sm font-medium text-slate-900">
-                          {employeeVisit.checkInTime ? new Date(employeeVisit.checkInTime).toLocaleTimeString('ru-RU') : '—'}
+                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                  <div className="p-6 border-b border-slate-200 bg-gradient-to-r from-blue-50 to-slate-50">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <h2 className="text-2xl font-bold text-slate-900 mb-1">
+                          {selectedEmployee?.name || selectedIndividualPatient?.fullName}
+                        </h2>
+                        <p className="text-sm text-slate-600">
+                          {selectedEmployee?.position || selectedIndividualPatient?.position || 'Индивидуальный пациент'}
                         </p>
                       </div>
-                    )}
+                      {employeeVisit && (
+                        <div className="text-right ml-4">
+                          <p className="text-xs text-slate-500 mb-1">Время входа</p>
+                          <p className="text-sm font-bold text-slate-900">
+                            {employeeVisit.checkInTime ? new Date(employeeVisit.checkInTime).toLocaleTimeString('ru-RU') : '—'}
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   </div>
+                  <div className="p-6">
 
-                  <div className="grid grid-cols-2 gap-4 mb-4">
-                    <div>
-                      <p className="text-xs text-slate-500">Дата рождения</p>
-                      <p className="text-sm font-medium text-slate-900">
-                        {selectedEmployee?.dob || selectedIndividualPatient?.dateOfBirth || '—'}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500">Пол</p>
-                      <p className="text-sm font-medium text-slate-900">
-                        {selectedEmployee?.gender || selectedIndividualPatient?.gender || '—'}
-                      </p>
-                    </div>
-                    {selectedEmployee && (
-                      <div className="col-span-2">
-                        <p className="text-xs text-slate-500">Вредные факторы</p>
-                        <p className="text-sm font-medium text-amber-600 mt-1">{selectedEmployee.harmfulFactor || '—'}</p>
+                    <div className="grid grid-cols-2 gap-4 mb-6">
+                      <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                        <p className="text-xs text-slate-500 mb-1">Дата рождения</p>
+                        <p className="text-sm font-semibold text-slate-900">
+                          {selectedEmployee?.dob || selectedIndividualPatient?.dateOfBirth || '—'}
+                        </p>
                       </div>
-                    )}
-                    {selectedIndividualPatient && selectedIndividualPatient.harmfulFactors && (
-                      <div className="col-span-2">
-                        <p className="text-xs text-slate-500">Вредные факторы</p>
-                        <p className="text-sm font-medium text-amber-600 mt-1">{selectedIndividualPatient.harmfulFactors}</p>
+                      <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                        <p className="text-xs text-slate-500 mb-1">Пол</p>
+                        <p className="text-sm font-semibold text-slate-900">
+                          {selectedEmployee?.gender || selectedIndividualPatient?.gender || '—'}
+                        </p>
                       </div>
-                    )}
-                  </div>
+                      {(selectedEmployee?.harmfulFactor || selectedIndividualPatient?.harmfulFactors) && (
+                        <div className="col-span-2 p-3 bg-amber-50 rounded-lg border border-amber-200">
+                          <p className="text-xs text-amber-600 mb-1 font-semibold">Вредные факторы</p>
+                          <p className="text-sm font-medium text-amber-900">
+                            {selectedEmployee?.harmfulFactor || selectedIndividualPatient?.harmfulFactors || '—'}
+                          </p>
+                        </div>
+                      )}
+                    </div>
 
                   {!employeeVisit && selectedEmployee && (
                     <button
                       onClick={() => handleCheckIn(selectedEmployee)}
                       disabled={isRegistering}
-                      className="w-full py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="group relative w-full py-3.5 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-xl font-semibold hover:from-blue-700 hover:to-blue-600 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                     >
                       {isRegistering ? (
                         <>
@@ -808,7 +824,7 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
                   {employeeVisit && employeeVisit.status === 'in_progress' && (
                     <button
                       onClick={handleCheckOut}
-                      className="w-full py-3 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 transition-colors flex items-center justify-center gap-2"
+                      className="group relative w-full py-3.5 bg-gradient-to-r from-green-600 to-green-500 text-white rounded-xl font-semibold hover:from-green-700 hover:to-green-600 transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
                     >
                       <ArrowRightIcon className="w-5 h-5" />
                       Зарегистрировать выход
@@ -818,89 +834,113 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
 
                 {/* Маршрут осмотра */}
                 {employeeRoute && employeeRoute.routeItems.length > 0 && (
-                  <div className="bg-white rounded-xl border border-slate-200 p-6">
-                    <h3 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
-                      <CalendarIcon className="w-5 h-5" />
-                      Маршрут осмотра
-                    </h3>
-                    <div className="space-y-3">
-                      {employeeRoute.routeItems.map((item, index) => (
-                        <div
-                          key={index}
-                          className={`flex items-center gap-4 p-4 rounded-lg border-2 ${
-                            item.status === 'completed' 
-                              ? 'bg-green-50 border-green-200' 
-                              : item.status === 'in_progress'
-                              ? 'bg-blue-50 border-blue-200'
-                              : 'bg-slate-50 border-slate-200'
-                          }`}
-                        >
-                          <div className="flex-shrink-0 w-8 h-8 rounded-full bg-white border-2 border-slate-300 flex items-center justify-center font-bold text-slate-600">
-                            {item.order}
+                  <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                    <div className="p-4 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-blue-50">
+                      <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                        <CalendarIcon className="w-5 h-5 text-blue-600" />
+                        Маршрут осмотра
+                      </h3>
+                    </div>
+                    <div className="p-6">
+                      <div className="space-y-3">
+                        {employeeRoute.routeItems.map((item, index) => (
+                          <div
+                            key={index}
+                            className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all ${
+                              item.status === 'completed' 
+                                ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-300 shadow-sm' 
+                                : item.status === 'in_progress'
+                                ? 'bg-gradient-to-r from-blue-50 to-cyan-50 border-blue-300 shadow-sm'
+                                : 'bg-slate-50 border-slate-200 hover:border-slate-300'
+                            }`}
+                          >
+                            <div className={`flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm shadow-sm ${
+                              item.status === 'completed'
+                                ? 'bg-green-500 text-white'
+                                : item.status === 'in_progress'
+                                ? 'bg-blue-500 text-white'
+                                : 'bg-white border-2 border-slate-300 text-slate-600'
+                            }`}>
+                              {item.order}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-bold text-slate-900 text-base">{item.specialty}</p>
+                              {item.doctorName && (
+                                <p className="text-sm text-slate-600 mt-1">Врач: {item.doctorName}</p>
+                              )}
+                              {item.roomNumber && (
+                                <p className="text-sm text-slate-600">Кабинет: {item.roomNumber}</p>
+                              )}
+                              {item.examinationDate && (
+                                <p className="text-xs text-slate-500 mt-1">
+                                  Осмотр: {new Date(item.examinationDate).toLocaleString('ru-RU')}
+                                </p>
+                              )}
+                            </div>
+                            <div className="flex-shrink-0">
+                              {item.status === 'completed' && (
+                                <CheckCircleIcon className="w-7 h-7 text-green-500" />
+                              )}
+                              {item.status === 'in_progress' && (
+                                <ClockIcon className="w-7 h-7 text-blue-500 animate-spin" />
+                              )}
+                              {item.status === 'pending' && (
+                                <div className="w-7 h-7 rounded-full border-2 border-slate-300 bg-white" />
+                              )}
+                            </div>
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="font-semibold text-slate-900">{item.specialty}</p>
-                            {item.doctorName && (
-                              <p className="text-sm text-slate-600 mt-1">Врач: {item.doctorName}</p>
-                            )}
-                            {item.roomNumber && (
-                              <p className="text-sm text-slate-600">Кабинет: {item.roomNumber}</p>
-                            )}
-                            {item.examinationDate && (
-                              <p className="text-xs text-slate-500 mt-1">
-                                Осмотр: {new Date(item.examinationDate).toLocaleString('ru-RU')}
-                              </p>
-                            )}
-                          </div>
-                          <div className="flex-shrink-0">
-                            {item.status === 'completed' && (
-                              <CheckCircleIcon className="w-6 h-6 text-green-500" />
-                            )}
-                            {item.status === 'in_progress' && (
-                              <ClockIcon className="w-6 h-6 text-blue-500 animate-spin" />
-                            )}
-                            {item.status === 'pending' && (
-                              <div className="w-6 h-6 rounded-full border-2 border-slate-300" />
-                            )}
-                          </div>
-                        </div>
-                      ))}
+                        ))}
+                      </div>
                     </div>
                   </div>
                 )}
 
                 {/* Выданные документы */}
                 {employeeVisit && (
-                  <div className="bg-white rounded-xl border border-slate-200 p-6">
-                    <h3 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
-                      <FileTextIcon className="w-5 h-5" />
-                      Выданные документы
-                    </h3>
-                    {employeeVisit.documentsIssued && employeeVisit.documentsIssued.length > 0 ? (
-                      <div className="space-y-2">
-                        {employeeVisit.documentsIssued.map((doc, index) => (
-                          <div key={index} className="flex items-center gap-2 p-3 bg-slate-50 rounded-lg">
-                            <FileTextIcon className="w-5 h-5 text-slate-400" />
-                            <span className="text-sm text-slate-900">{doc}</span>
-                          </div>
-                        ))}
+                  <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                    <div className="p-4 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-blue-50">
+                      <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                        <FileTextIcon className="w-5 h-5 text-blue-600" />
+                        Выданные документы
+                      </h3>
+                    </div>
+                    <div className="p-6">
+                      {employeeVisit.documentsIssued && employeeVisit.documentsIssued.length > 0 ? (
+                        <div className="space-y-2 mb-4">
+                          {employeeVisit.documentsIssued.map((doc, index) => (
+                            <div key={index} className="flex items-center gap-3 p-3 bg-gradient-to-r from-slate-50 to-blue-50 rounded-lg border border-slate-200">
+                              <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center flex-shrink-0">
+                                <FileTextIcon className="w-4 h-4 text-blue-600" />
+                              </div>
+                              <span className="text-sm font-medium text-slate-900 flex-1">{doc}</span>
+                              <CheckCircleIcon className="w-5 h-5 text-green-500 flex-shrink-0" />
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="mb-4 p-4 bg-slate-50 rounded-lg border border-slate-200 text-center">
+                          <FileTextIcon className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                          <p className="text-sm text-slate-500">Документы не выданы</p>
+                        </div>
+                      )}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <button
+                          onClick={() => handleIssueDocument('Направление на анализы')}
+                          disabled={isRegistering}
+                          className="group relative inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-xl font-semibold hover:from-blue-700 hover:to-blue-600 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <FileTextIcon className="w-4 h-4" />
+                          <span>Выдать направление</span>
+                        </button>
+                        <button
+                          onClick={() => handleIssueDocument('Маршрутный лист')}
+                          disabled={isRegistering}
+                          className="group relative inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-green-600 to-green-500 text-white rounded-xl font-semibold hover:from-green-700 hover:to-green-600 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <FileTextIcon className="w-4 h-4" />
+                          <span>Выдать маршрутный лист</span>
+                        </button>
                       </div>
-                    ) : (
-                      <p className="text-sm text-slate-500">Документы не выданы</p>
-                    )}
-                    <div className="mt-4 flex gap-2">
-                      <button
-                        onClick={() => handleIssueDocument('Направление на анализы')}
-                        className="px-4 py-2 text-sm bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"
-                      >
-                        Выдать направление
-                      </button>
-                      <button
-                        onClick={() => handleIssueDocument('Маршрутный лист')}
-                        className="px-4 py-2 text-sm bg-green-50 text-green-600 rounded-lg hover:bg-green-100 transition-colors"
-                      >
-                        Выдать маршрутный лист
-                      </button>
                     </div>
                   </div>
                 )}

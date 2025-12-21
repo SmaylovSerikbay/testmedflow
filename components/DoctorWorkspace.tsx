@@ -430,34 +430,49 @@ const DoctorWorkspace: React.FC<DoctorWorkspaceProps> = ({ currentUser }) => {
             {/* Список сотрудников */}
             {routeSheet ? (
               <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                <div className="p-4 border-b border-slate-200">
-                  <h2 className="font-semibold text-slate-900">
-                    Пациенты ({filteredEmployees.length})
-                  </h2>
+                <div className="p-4 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-blue-50">
+                  <div className="flex items-center justify-between">
+                    <h2 className="font-semibold text-slate-900">
+                      Пациенты
+                    </h2>
+                    <span className="px-2.5 py-1 bg-white rounded-full text-xs font-bold text-slate-700 border border-slate-200">
+                      {filteredEmployees.length}
+                    </span>
+                  </div>
                 </div>
                 <div className="max-h-[600px] overflow-y-auto">
                   {filteredEmployees.length === 0 ? (
-                    <div className="p-8 text-center text-slate-500">
-                      Сотрудники не найдены
+                    <div className="p-8 text-center">
+                      <UserMdIcon className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                      <p className="text-sm text-slate-500">Пациенты не найдены</p>
                     </div>
                   ) : (
-                    <div className="divide-y divide-slate-200">
+                    <div className="divide-y divide-slate-100">
                       {filteredEmployees.map(emp => {
                         const employee = selectedContract?.employees.find(e => e.id === emp.employeeId);
                         return (
                           <button
                             key={emp.employeeId}
                             onClick={() => setSelectedEmployee(employee || null)}
-                            className={`w-full p-4 text-left hover:bg-slate-50 transition-colors ${
-                              selectedEmployee?.id === emp.employeeId ? 'bg-blue-50 border-l-4 border-blue-500' : ''
+                            className={`w-full p-4 text-left hover:bg-slate-50 transition-all ${
+                              selectedEmployee?.id === emp.employeeId 
+                                ? 'bg-blue-50 border-l-4 border-blue-500 shadow-sm' 
+                                : 'hover:border-l-4 hover:border-slate-200'
                             }`}
                           >
-                            <div className="flex items-start justify-between">
+                            <div className="flex items-start justify-between gap-3">
                               <div className="flex-1 min-w-0">
-                                <p className="font-medium text-slate-900 truncate">{emp.name}</p>
-                                <p className="text-sm text-slate-600 mt-1">{emp.position}</p>
+                                <div className="flex items-center gap-2 mb-1">
+                                  <p className="font-semibold text-slate-900 truncate">{emp.name}</p>
+                                  {emp.status === 'completed' && (
+                                    <span className="px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-[10px] font-bold">
+                                      Осмотрено
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-sm text-slate-600 truncate">{emp.position}</p>
                               </div>
-                              <div className="ml-4 flex-shrink-0">
+                              <div className="flex-shrink-0">
                                 {emp.status === 'completed' && (
                                   <CheckCircleIcon className="w-5 h-5 text-green-500" />
                                 )}
@@ -474,8 +489,14 @@ const DoctorWorkspace: React.FC<DoctorWorkspaceProps> = ({ currentUser }) => {
                 </div>
               </div>
             ) : (
-              <div className="bg-white rounded-xl border border-slate-200 p-8 text-center">
-                <p className="text-slate-500">Маршрутный лист не найден</p>
+              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                <div className="p-8 text-center">
+                  <div className="w-16 h-16 bg-gradient-to-br from-slate-50 to-blue-50 rounded-xl flex items-center justify-center mx-auto mb-4">
+                    <FileTextIcon className="w-8 h-8 text-slate-400" />
+                  </div>
+                  <h3 className="text-base font-bold text-slate-900 mb-2">Маршрутный лист не найден</h3>
+                  <p className="text-sm text-slate-500">Выберите договор с активным маршрутным листом</p>
+                </div>
               </div>
             )}
           </div>
@@ -483,88 +504,90 @@ const DoctorWorkspace: React.FC<DoctorWorkspaceProps> = ({ currentUser }) => {
           {/* Правая панель: Форма осмотра */}
           <div className="lg:col-span-2">
             {selectedEmployee && ambulatoryCard ? (
-              <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-6">
-                <div>
-                  <h2 className="text-xl font-bold text-slate-900">{selectedEmployee.name}</h2>
-                  <p className="text-sm text-slate-600 mt-1">{selectedEmployee.position}</p>
-                </div>
-
-                {/* Форма осмотра */}
-                <div className="space-y-4">
+              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                <div className="p-6 border-b border-slate-200 bg-gradient-to-r from-blue-50 to-slate-50">
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                    <h2 className="text-2xl font-bold text-slate-900 mb-1">{selectedEmployee.name}</h2>
+                    <p className="text-sm text-slate-600">{selectedEmployee.position}</p>
+                  </div>
+                </div>
+                <div className="p-6 space-y-6">
+                {/* Форма осмотра */}
+                <div className="space-y-5">
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-2">
                       Жалобы
                     </label>
                     <textarea
                       value={examinationForm.complaints}
                       onChange={(e) => setExaminationForm({ ...examinationForm, complaints: e.target.value })}
-                      className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                       rows={3}
                       placeholder="Жалобы пациента..."
                     />
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                    <label className="block text-sm font-semibold text-slate-700 mb-2">
                       Объективный осмотр
                     </label>
                     <textarea
                       value={examinationForm.objectiveExamination}
                       onChange={(e) => setExaminationForm({ ...examinationForm, objectiveExamination: e.target.value })}
-                      className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                       rows={4}
                       placeholder="Результаты объективного осмотра..."
                     />
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                    <label className="block text-sm font-semibold text-slate-700 mb-2">
                       Диагноз
                     </label>
                     <input
                       type="text"
                       value={examinationForm.diagnosis}
                       onChange={(e) => setExaminationForm({ ...examinationForm, diagnosis: e.target.value })}
-                      className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                       placeholder="Диагноз..."
                     />
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                    <label className="block text-sm font-semibold text-slate-700 mb-2">
                       Заключение
                     </label>
                     <textarea
                       value={examinationForm.conclusion}
                       onChange={(e) => setExaminationForm({ ...examinationForm, conclusion: e.target.value })}
-                      className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                       rows={3}
                       placeholder="Заключение врача..."
                     />
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                    <label className="block text-sm font-semibold text-slate-700 mb-2">
                       Рекомендации
                     </label>
                     <textarea
                       value={examinationForm.recommendations}
                       onChange={(e) => setExaminationForm({ ...examinationForm, recommendations: e.target.value })}
-                      className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                       rows={2}
                       placeholder="Рекомендации..."
                     />
                   </div>
 
-                  <div className="flex items-center gap-4">
-                    <label className="flex items-center gap-2 cursor-pointer">
+                  <div className="flex items-center gap-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                    <label className="flex items-center gap-3 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={examinationForm.isFit}
                         onChange={(e) => setExaminationForm({ ...examinationForm, isFit: e.target.checked })}
-                        className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                        className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500 border-slate-300"
                       />
-                      <span className="text-sm font-medium text-slate-700">
+                      <span className="text-sm font-semibold text-slate-700">
                         Годен к работе по специальности
                       </span>
                     </label>
@@ -573,7 +596,7 @@ const DoctorWorkspace: React.FC<DoctorWorkspaceProps> = ({ currentUser }) => {
                   <button
                     onClick={handleSaveExamination}
                     disabled={isSaving}
-                    className="w-full py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    className="group relative w-full py-3.5 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-xl font-semibold hover:from-blue-700 hover:to-blue-600 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
                     {isSaving ? (
                       <>
@@ -588,11 +611,17 @@ const DoctorWorkspace: React.FC<DoctorWorkspaceProps> = ({ currentUser }) => {
                     )}
                   </button>
                 </div>
+                </div>
               </div>
             ) : (
-              <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
-                <UserMdIcon className="w-16 h-16 text-slate-300 mx-auto mb-4" />
-                <p className="text-slate-500">Выберите сотрудника для проведения осмотра</p>
+              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                <div className="p-12 text-center">
+                  <div className="w-20 h-20 bg-gradient-to-br from-blue-50 to-slate-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                    <UserMdIcon className="w-10 h-10 text-slate-400" />
+                  </div>
+                  <h3 className="text-lg font-bold text-slate-900 mb-2">Выберите пациента</h3>
+                  <p className="text-sm text-slate-500">Выберите сотрудника из списка для проведения осмотра</p>
+                </div>
               </div>
             )}
           </div>

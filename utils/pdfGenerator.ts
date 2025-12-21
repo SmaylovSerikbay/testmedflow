@@ -1,5 +1,5 @@
 import jsPDF from 'jspdf';
-import { Contract, Employee, Doctor } from '../types';
+import { Contract, Employee, Doctor, EmployeeRoute } from '../types';
 import { FACTOR_RULES, FactorRule } from '../factorRules';
 
 // Функция определения правил по вредным факторам
@@ -663,6 +663,115 @@ export const generateHealthPlanPDF = (contract: Contract, employees: Employee[])
   yPosition += 15;
   
   doc.text(`Дата: ${new Date().toLocaleDateString('ru-RU')}`, 20, yPosition);
+  
+  return doc;
+};
+
+// Генерация маршрутного листа для конкретного сотрудника
+export const generateEmployeeRouteSheetPDF = (
+  employee: Employee,
+  contract: Contract,
+  employeeRoute: EmployeeRoute | null,
+  doctors: Doctor[] = []
+) => {
+  const doc = new jsPDF();
+  setupPDFFont(doc);
+  
+  let yPosition = 20;
+  
+  // Заголовок
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.text('МАРШРУТНЫЙ ЛИСТ', 105, yPosition, { align: 'center' });
+  yPosition += 10;
+  
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'normal');
+  yPosition += 10;
+  
+  // Информация о сотруднике
+  doc.setFont('helvetica', 'bold');
+  doc.text('ИНФОРМАЦИЯ О РАБОТНИКЕ:', 20, yPosition);
+  yPosition += 10;
+  
+  doc.setFont('helvetica', 'normal');
+  doc.text(`ФИО: ${employee.name}`, 20, yPosition);
+  yPosition += 8;
+  doc.text(`Должность: ${employee.position}`, 20, yPosition);
+  yPosition += 8;
+  if (employee.dob) {
+    doc.text(`Дата рождения: ${employee.dob}`, 20, yPosition);
+    yPosition += 8;
+  }
+  if (employee.harmfulFactor) {
+    yPosition = addTextWithWrap(doc, `Вредные факторы: ${employee.harmfulFactor}`, 20, yPosition, 170);
+    yPosition += 8;
+  }
+  yPosition += 5;
+  
+  // Информация о договоре
+  doc.setFont('helvetica', 'bold');
+  doc.text('ИНФОРМАЦИЯ О ДОГОВОРЕ:', 20, yPosition);
+  yPosition += 10;
+  
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Договор: ${contract.number}`, 20, yPosition);
+  yPosition += 8;
+  doc.text(`Организация: ${contract.clientName}`, 20, yPosition);
+  yPosition += 8;
+  doc.text(`Клиника: ${contract.clinicName}`, 20, yPosition);
+  yPosition += 10;
+  
+  // Маршрут осмотра
+  if (employeeRoute && employeeRoute.routeItems.length > 0) {
+    doc.setFont('helvetica', 'bold');
+    doc.text('МАРШРУТ ОСМОТРА:', 20, yPosition);
+    yPosition += 10;
+    
+    doc.setFont('helvetica', 'normal');
+    employeeRoute.routeItems.forEach((item, index) => {
+      const statusText = item.status === 'completed' ? '✓ Выполнено' : '○ Ожидает';
+      doc.text(`${item.order}. ${item.specialty} - ${statusText}`, 20, yPosition);
+      yPosition += 7;
+      if (item.doctorName) {
+        doc.text(`   Врач: ${item.doctorName}`, 25, yPosition);
+        yPosition += 7;
+      }
+      if (item.roomNumber) {
+        doc.text(`   Кабинет: ${item.roomNumber}`, 25, yPosition);
+        yPosition += 7;
+      }
+      yPosition += 3;
+    });
+  } else {
+    // Если маршрут не определен, показываем стандартный
+    doc.setFont('helvetica', 'bold');
+    doc.text('МАРШРУТ ОСМОТРА:', 20, yPosition);
+    yPosition += 10;
+    
+    doc.setFont('helvetica', 'normal');
+    const defaultRoute = [
+      '1. Регистрация и оформление документов',
+      '2. Осмотр врача-терапевта',
+      '3. Осмотр врача-профпатолога',
+      '4. Лабораторные исследования (по показаниям)',
+      '5. Заключение врачебной комиссии'
+    ];
+    
+    defaultRoute.forEach(step => {
+      doc.text(step, 20, yPosition);
+      yPosition += 7;
+    });
+  }
+  
+  yPosition += 10;
+  
+  // Подпись и дата
+  doc.text(`Дата выдачи: ${new Date().toLocaleDateString('ru-RU')}`, 20, yPosition);
+  yPosition += 15;
+  doc.text('Регистратор: _________________________', 20, yPosition);
+  yPosition += 10;
+  doc.text('М.П.', 20, yPosition);
   
   return doc;
 };
