@@ -30,25 +30,10 @@ export interface Employee {
   lastMedDate?: string;            // Дата последнего медосмотра
   note?: string;                   // Примечание (может содержать телефон для регистрации)
   harmfulFactor: string;
-  status: EmployeeStatus;
+  status: 'pending' | 'fit' | 'unfit' | 'needs_observation';
   phone?: string;                  // Телефон сотрудника (извлекается из note)
   userId?: string;                  // UID пользователя, если зарегистрирован
-  address?: string;
-  workplace?: string;
-  bloodType?: string;
-  rhFactor?: string;
 }
-
-export type EmployeeStatus = 
-  | 'pending'           // Ожидает
-  | 'fit'               // Здоровые (Группа 1)
-  | 'practically_fit'   // Практически здоровые (Группа 2)
-  | 'early_illness'     // Начальные формы общих заболеваний (Группа 3)
-  | 'expressed_illness' // Выраженные формы общих заболеваний (Группа 4)
-  | 'factor_effect'     // Признаки воздействия вредных факторов (Группа 5)
-  | 'prof_disease'      // Признаки профессиональных заболеваний (Группа 6)
-  | 'unfit'             // Не годен (общий статус)
-  | 'needs_observation'; // Требуется наблюдение (общий статус)
 
 // Амбулаторная карта сотрудника (Форма 052у)
 export interface AmbulatoryCard {
@@ -109,7 +94,7 @@ export interface AmbulatoryCard {
   
   // Общее заключение комиссии
   finalConclusion?: {
-    status: EmployeeStatus;
+    status: 'fit' | 'unfit' | 'needs_observation';
     date: string;
     doctorId: string; // ID председателя комиссии
     doctorName?: string;
@@ -118,7 +103,6 @@ export interface AmbulatoryCard {
     nextExamDate?: string; // Дата следующего осмотра
     restrictions?: string; // Ограничения к работе
     notes?: string;
-    healthGroup?: 1 | 2 | 3 | 4 | 5 | 6; // Группа здоровья по приказу
   };
   
   createdAt: string;
@@ -186,7 +170,7 @@ export interface CalendarPlan {
 
 export interface ContractDocument {
   id: string;
-  type: 'contract' | 'order' | 'route_sheet' | 'final_act' | 'health_plan' | 'summary_report' | 'contingent' | 'emergency_notice';
+  type: 'contract' | 'order' | 'route_sheet' | 'final_act' | 'health_plan';
   title: string;
   date: string;
   url?: string;
@@ -216,7 +200,6 @@ export interface Contract {
   employees: Employee[]; // Contingent (App 3)
   doctors?: Doctor[]; // Врачи клиники для маршрутных листов
   calendarPlan?: CalendarPlan;
-  contingentCoordinated?: boolean; // Согласовано ли Приложение 3 с СЭС (п. 15)
   documents: ContractDocument[];
 
   // OTP-based signing (per side)

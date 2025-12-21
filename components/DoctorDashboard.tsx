@@ -1,18 +1,10 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { UserProfile, Contract, Employee, DoctorRouteSheet, DoctorExamination, AmbulatoryCard } from '../types';
-import { Form052Data } from '../types/form052';
 import { FACTOR_RULES, FactorRule } from '../factorRules';
 import { LoaderIcon, UserMdIcon, FileTextIcon, CheckShieldIcon, LogoutIcon, AlertCircleIcon, SearchIcon, FilterIcon, CalendarIcon, ClockIcon } from './Icons';
 import FinalConclusionModal from './FinalConclusionModal';
 import Form052Editor from './Form052Editor';
-import { 
-  generateClinicRouteSheetPDF, 
-  generateOrganizationRouteSheetPDF, 
-  generateCommissionOrderPDF,
-  generateFinalActPDF,
-  generateHealthPlanPDF,
-  generateEmergencyNotificationPDF
-} from '../utils/pdfGenerator';
+import { Form052Data } from '../types/form052';
 import {
   apiListContractsByBin,
   apiListRouteSheets,
@@ -763,16 +755,6 @@ const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ currentUser }) => {
     }
   }, [selectedEmployee, contract, currentUser, examinationForm, routeSheet, loadAmbulatoryCards, employees]);
 
-  const handleGenerateEmergencyNotice = useCallback(() => {
-    if (!contract || !selectedEmployee || !examinationForm.diagnosis) {
-      alert('Выберите сотрудника и укажите диагноз');
-      return;
-    }
-    
-    const doc = generateEmergencyNotificationPDF(contract, selectedEmployee, examinationForm.diagnosis);
-    doc.save(`Экстренное_извещение_${selectedEmployee.name}.pdf`);
-  }, [contract, selectedEmployee, examinationForm.diagnosis]);
-
   // Фильтрация и поиск пациентов
   const filteredEmployees = useMemo(() => {
     if (!routeSheet) return [];
@@ -960,7 +942,7 @@ const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ currentUser }) => {
               <div>
                 <p className="text-xs text-slate-500 mb-1">Завершены</p>
                 <p className="text-2xl font-bold text-blue-600">
-                  {Object.values(ambulatoryCards as Record<string, AmbulatoryCard>).filter(c => c?.finalConclusion).length}
+                  {Object.values(ambulatoryCards).filter(c => c?.finalConclusion).length}
                 </p>
               </div>
               <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
@@ -1410,16 +1392,6 @@ const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ currentUser }) => {
                       </>
                     )}
                   </button>
-
-                  {examinationForm.diagnosis && (
-                    <button
-                      onClick={handleGenerateEmergencyNotice}
-                      className="w-full py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl font-bold hover:bg-amber-100 transition-colors flex items-center justify-center gap-2"
-                    >
-                      <AlertCircleIcon className="w-4 h-4" />
-                      Экстренное извещение (п. 19)
-                    </button>
-                  )}
 
                   <button
                     onClick={() => {

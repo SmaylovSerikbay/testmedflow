@@ -10,8 +10,7 @@ import {
   generateOrganizationRouteSheetPDF, 
   generateCommissionOrderPDF,
   generateFinalActPDF,
-  generateHealthPlanPDF,
-  generateSummaryReportPDF
+  generateHealthPlanPDF
 } from '../utils/pdfGenerator';
 
 // --- RESEARCH PARSING UTILITIES ---
@@ -595,45 +594,41 @@ export const CalendarPlanSection: React.FC<CalendarPlanSectionProps> = ({
                     Для отправки календарного плана сначала загрузите контингент работников (Приложение 3).
                   </p>
                 </div>
-              ) : !contract.contingentCoordinated ? (
-                <div className="rounded-xl border border-dashed border-amber-300 bg-amber-50 px-3 py-2">
-                  <p className="text-[11px] text-amber-800 font-medium text-center">
-                    ⚠️ Внимание: Список контингента (Приложение 3) еще не согласован с СЭС (п. 15 приказа).
-                  </p>
-                </div>
-              ) : null}
-              
-              <button
-                onClick={onSavePlan}
-                disabled={isSavingPlan || contract.calendarPlan?.status === 'approved' || employees.length === 0}
-                className="w-full py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-black disabled:opacity-60 transition-all shadow-md flex justify-center items-center gap-2"
-              >
-                {isSavingPlan ? (
-                  <LoaderIcon className="w-3 h-3 animate-spin" />
-                ) : (
-                  <>
-                    {contract.calendarPlan?.status === 'draft' && (
-                      <CheckShieldIcon className="w-3 h-3 text-emerald-400" />
+              ) : (
+                <>
+                  <button
+                    onClick={onSavePlan}
+                    disabled={isSavingPlan || contract.calendarPlan?.status === 'approved'}
+                    className="w-full py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-black disabled:opacity-60 transition-all shadow-md flex justify-center items-center gap-2"
+                  >
+                    {isSavingPlan ? (
+                      <LoaderIcon className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <>
+                        {contract.calendarPlan?.status === 'draft' && (
+                          <CheckShieldIcon className="w-3 h-3 text-emerald-400" />
+                        )}
+                        {contract.calendarPlan?.status === 'draft'
+                          ? 'План отправлен на согласование'
+                          : contract.calendarPlan?.status === 'approved'
+                          ? 'План утверждён работодателем'
+                          : contract.calendarPlan?.status === 'rejected'
+                          ? 'Отправить исправленный план'
+                          : 'Отправить план на согласование'}
+                      </>
                     )}
-                    {contract.calendarPlan?.status === 'draft'
-                      ? 'План отправлен на согласование'
-                      : contract.calendarPlan?.status === 'approved'
-                      ? 'План утверждён работодателем'
-                      : contract.calendarPlan?.status === 'rejected'
-                      ? 'Отправить исправленный план'
-                      : 'Отправить план на согласование'}
-                  </>
-                )}
-              </button>
-              {contract.calendarPlan?.status === 'draft' && (
-                <p className="text-[10px] text-slate-400 text-center">
-                  Ожидается утверждение плана работодателем.
-                </p>
-              )}
-              {contract.calendarPlan?.status === 'rejected' && (
-                <p className="text-[10px] text-red-500 text-center">
-                  План отклонён работодателем{contract.calendarPlan?.rejectReason ? `: ${contract.calendarPlan.rejectReason}` : ''}.
-                </p>
+                  </button>
+                  {contract.calendarPlan?.status === 'draft' && (
+                    <p className="text-[10px] text-slate-400 text-center">
+                      Ожидается утверждение плана работодателем.
+                    </p>
+                  )}
+                  {contract.calendarPlan?.status === 'rejected' && (
+                    <p className="text-[10px] text-red-500 text-center">
+                      План отклонён работодателем{contract.calendarPlan?.rejectReason ? `: ${contract.calendarPlan.rejectReason}` : ''}.
+                    </p>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -1166,14 +1161,6 @@ ${obsList}
           date 
         });
       }
-      if (!existingDocs.find(d => d.type === 'summary_report' as any)) {
-        newDocs.push({ 
-          id: 'summary_' + Date.now(), 
-          type: 'summary_report' as any, 
-          title: 'Сводный отчет (Приложение 2)', 
-          date 
-        });
-      }
 
       await updateContract(contract.id, {
         finalActContent: reportForm.finalAct,
@@ -1407,10 +1394,6 @@ ${obsList}
           case 'health_plan':
             pdfDoc = generateHealthPlanPDF(contract, employees);
             filename = `План_оздоровления_${contract.number}.pdf`;
-            break;
-          case 'summary_report' as any:
-            pdfDoc = generateSummaryReportPDF(contract, employees);
-            filename = `Сводный_отчет_${contract.number}.pdf`;
             break;
           default:
             showToast('error', 'Неизвестный тип документа');
