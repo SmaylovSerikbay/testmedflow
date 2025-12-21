@@ -109,7 +109,7 @@ type RouteSheet struct {
 type AmbulatoryCard struct {
 	ID              int64          `json:"id"`
 	EmployeeID      string         `json:"employeeId"`
-	ContractID      int64          `json:"contractId"`
+	ContractID      *int64         `json:"contractId,omitempty"` // NULL для индивидуальных пациентов
 	CardNumber      *string        `json:"cardNumber,omitempty"`
 	PersonalInfo    map[string]any `json:"personalInfo,omitempty"`
 	Anamnesis       map[string]any `json:"anamnesis,omitempty"`
@@ -334,6 +334,74 @@ CREATE TABLE IF NOT EXISTS ambulatory_cards (
 	_, err = tx.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_doctors_clinic_uid ON doctors(clinic_uid);`)
 	if err != nil {
 		return nil, fmt.Errorf("create index doctors_clinic_uid: %w", err)
+	}
+
+	// Таблица для регистрации посещений сотрудников
+	_, err = tx.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS employee_visits (
+  id           SERIAL PRIMARY KEY,
+  employee_id  TEXT NOT NULL,
+  contract_id  INTEGER REFERENCES contracts(id) ON DELETE SET NULL,
+  clinic_id    TEXT NOT NULL,
+  visit_date   DATE NOT NULL DEFAULT CURRENT_DATE,
+  check_in_time TIMESTAMPTZ,
+  check_out_time TIMESTAMPTZ,
+  status       TEXT NOT NULL DEFAULT 'registered',
+  route_sheet_id INTEGER REFERENCES route_sheets(id) ON DELETE SET NULL,
+  documents_issued JSONB DEFAULT '[]'::jsonb,
+  registered_by TEXT,
+  notes        TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- Для индивидуальных пациентов (без договора) contract_id будет NULL
+  CONSTRAINT valid_status CHECK (status IN ('registered', 'in_progress', 'completed', 'cancelled'))
+);
+`)
+	if err != nil {
+		return nil, fmt.Errorf("migrate employee_visits: %w", err)
+	}
+
+	_, err = tx.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_employee_visits_employee ON employee_visits(employee_id);`)
+	if err != nil {
+		return nil, fmt.Errorf("create index employee_visits_employee: %w", err)
+	}
+
+	_, err = tx.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_employee_visits_contract ON employee_visits(contract_id) WHERE contract_id IS NOT NULL;`)
+	if err != nil {
+		return nil, fmt.Errorf("create index employee_visits_contract: %w", err)
+	}
+
+	_, err = tx.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_employee_visits_clinic ON employee_visits(clinic_id);`)
+	if err != nil {
+		return nil, fmt.Errorf("create index employee_visits_clinic: %w", err)
+	}
+
+	_, err = tx.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_employee_visits_status ON employee_visits(status);`)
+	if err != nil {
+		return nil, fmt.Errorf("create index employee_visits_status: %w", err)
+	}
+
+	_, err = tx.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_employee_visits_date ON employee_visits(visit_date);`)
+	if err != nil {
+		return nil, fmt.Errorf("create index employee_visits_date: %w", err)
+	}
+
+	// Обновляем ambulatory_cards чтобы contract_id мог быть NULL для индивидуальных пациентов
+	_, err = tx.Exec(ctx, `ALTER TABLE ambulatory_cards ALTER COLUMN contract_id DROP NOT NULL;`)
+	if err != nil {
+		// Игнорируем ошибку если колонка уже nullable
+	}
+
+	// Убираем уникальное ограничение для индивидуальных пациентов
+	_, err = tx.Exec(ctx, `DROP INDEX IF EXISTS ambulatory_cards_employee_id_contract_id_key;`)
+	if err != nil {
+		// Игнорируем ошибку
+	}
+
+	_, err = tx.Exec(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS ambulatory_cards_employee_contract_unique 
+		ON ambulatory_cards(employee_id, contract_id) WHERE contract_id IS NOT NULL;`)
+	if err != nil {
+		return nil, fmt.Errorf("create unique index ambulatory_cards: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -1157,24 +1225,46 @@ func getAmbulatoryCardHandler(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	// Используем LIMIT 1 на случай, если есть дубликаты (хотя UNIQUE constraint должен предотвращать это)
-	row := db.QueryRow(ctx, `
+	// Если contractID указан, ищем по обоим параметрам
+	// Если contractID не указан, ищем индивидуального пациента (contract_id IS NULL)
+	var row interface {
+		Scan(dest ...any) error
+	}
+	if contractIDStr == "" || contractIDStr == "null" || contractIDStr == "undefined" {
+		row = db.QueryRow(ctx, `
+SELECT id, employee_id, contract_id, card_number, personal_info, anamnesis, vitals, lab_tests, examinations, final_conclusion, created_at, updated_at
+FROM ambulatory_cards
+WHERE employee_id = $1 AND contract_id IS NULL
+ORDER BY updated_at DESC
+LIMIT 1
+`, employeeID)
+	} else {
+		var contractID int64
+		if _, err := fmt.Sscanf(contractIDStr, "%d", &contractID); err != nil {
+			errorResponse(w, http.StatusBadRequest, "invalid contractId")
+			return
+		}
+		row = db.QueryRow(ctx, `
 SELECT id, employee_id, contract_id, card_number, personal_info, anamnesis, vitals, lab_tests, examinations, final_conclusion, created_at, updated_at
 FROM ambulatory_cards
 WHERE employee_id = $1 AND contract_id = $2
 ORDER BY updated_at DESC
 LIMIT 1
 `, employeeID, contractID)
+	}
 
 	var ac AmbulatoryCard
 	var createdAt, updatedAt time.Time
 	var cardNumber *string
+	var contractID *int64
 	var personalInfoJSON, anamnesisJSON, vitalsJSON, labTestsJSON, examinationsJSON, finalConclusionJSON []byte
 
-	if err := row.Scan(&ac.ID, &ac.EmployeeID, &ac.ContractID, &cardNumber, &personalInfoJSON, &anamnesisJSON, &vitalsJSON, &labTestsJSON, &examinationsJSON, &finalConclusionJSON, &createdAt, &updatedAt); err != nil {
+	if err := row.Scan(&ac.ID, &ac.EmployeeID, &contractID, &cardNumber, &personalInfoJSON, &anamnesisJSON, &vitalsJSON, &labTestsJSON, &examinationsJSON, &finalConclusionJSON, &createdAt, &updatedAt); err != nil {
 		jsonResponse(w, http.StatusOK, map[string]any{"card": nil})
 		return
 	}
 
+	ac.ContractID = contractID
 	ac.CardNumber = cardNumber
 	ac.CreatedAt = createdAt.Format(time.RFC3339)
 	ac.UpdatedAt = updatedAt.Format(time.RFC3339)
@@ -1221,7 +1311,11 @@ LIMIT 1
 		}
 	}
 
-	log.Printf("getAmbulatoryCard: returning card id=%d, employeeId=%s, contractId=%d, hasExaminations=%v, hasAnamnesis=%v, hasVitals=%v", ac.ID, ac.EmployeeID, ac.ContractID, len(ac.Examinations) > 0, ac.Anamnesis != nil && len(ac.Anamnesis) > 0, ac.Vitals != nil && len(ac.Vitals) > 0)
+	contractIDStr := "null"
+	if ac.ContractID != nil {
+		contractIDStr = fmt.Sprintf("%d", *ac.ContractID)
+	}
+	log.Printf("getAmbulatoryCard: returning card id=%d, employeeId=%s, contractId=%s, hasExaminations=%v, hasAnamnesis=%v, hasVitals=%v", ac.ID, ac.EmployeeID, contractIDStr, len(ac.Examinations) > 0, ac.Anamnesis != nil && len(ac.Anamnesis) > 0, ac.Vitals != nil && len(ac.Vitals) > 0)
 	jsonResponse(w, http.StatusOK, map[string]any{"card": ac})
 }
 
@@ -1263,11 +1357,13 @@ ORDER BY created_at DESC
 		var cardNumber *string
 		var personalInfoJSON, anamnesisJSON, vitalsJSON, labTestsJSON, examinationsJSON, finalConclusionJSON []byte
 
-		if err := rows.Scan(&ac.ID, &ac.EmployeeID, &ac.ContractID, &cardNumber, &personalInfoJSON, &anamnesisJSON, &vitalsJSON, &labTestsJSON, &examinationsJSON, &finalConclusionJSON, &createdAt, &updatedAt); err != nil {
+		var contractID *int64
+		if err := rows.Scan(&ac.ID, &ac.EmployeeID, &contractID, &cardNumber, &personalInfoJSON, &anamnesisJSON, &vitalsJSON, &labTestsJSON, &examinationsJSON, &finalConclusionJSON, &createdAt, &updatedAt); err != nil {
 			log.Printf("scan ambulatory card: %v", err)
 			continue
 		}
 
+		ac.ContractID = contractID
 		ac.CardNumber = cardNumber
 		ac.CreatedAt = createdAt.Format(time.RFC3339)
 		ac.UpdatedAt = updatedAt.Format(time.RFC3339)
@@ -1323,8 +1419,8 @@ func createAmbulatoryCardHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if in.EmployeeID == "" || in.ContractID == 0 {
-		errorResponse(w, http.StatusBadRequest, "employeeId and contractId are required")
+	if in.EmployeeID == "" {
+		errorResponse(w, http.StatusBadRequest, "employeeId is required")
 		return
 	}
 
@@ -1340,10 +1436,21 @@ func createAmbulatoryCardHandler(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	var id int64
-	err := db.QueryRow(ctx, `
+	var err error
+
+	// Для индивидуальных пациентов (contract_id = NULL) используем простой INSERT
+	if in.ContractID == nil {
+		err = db.QueryRow(ctx, `
+INSERT INTO ambulatory_cards (employee_id, contract_id, card_number, personal_info, anamnesis, vitals, lab_tests, examinations, final_conclusion)
+VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id
+`, in.EmployeeID, in.CardNumber, personalInfoJSON, anamnesisJSON, vitalsJSON, labTestsJSON, examinationsJSON, finalConclusionJSON).Scan(&id)
+	} else {
+		// Для пациентов по договору используем ON CONFLICT
+		err = db.QueryRow(ctx, `
 INSERT INTO ambulatory_cards (employee_id, contract_id, card_number, personal_info, anamnesis, vitals, lab_tests, examinations, final_conclusion)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-ON CONFLICT (employee_id, contract_id) DO UPDATE SET
+ON CONFLICT (employee_id, contract_id) WHERE contract_id IS NOT NULL DO UPDATE SET
   card_number = EXCLUDED.card_number,
   personal_info = EXCLUDED.personal_info,
   anamnesis = EXCLUDED.anamnesis,
@@ -1353,7 +1460,9 @@ ON CONFLICT (employee_id, contract_id) DO UPDATE SET
   final_conclusion = EXCLUDED.final_conclusion,
   updated_at = NOW()
 RETURNING id
-`, in.EmployeeID, in.ContractID, in.CardNumber, personalInfoJSON, anamnesisJSON, vitalsJSON, labTestsJSON, examinationsJSON, finalConclusionJSON).Scan(&id)
+`, in.EmployeeID, *in.ContractID, in.CardNumber, personalInfoJSON, anamnesisJSON, vitalsJSON, labTestsJSON, examinationsJSON, finalConclusionJSON).Scan(&id)
+	}
+
 	if err != nil {
 		log.Printf("createAmbulatoryCard error: %v", err)
 		errorResponse(w, http.StatusInternalServerError, "db error")
@@ -1501,6 +1610,245 @@ func updateAmbulatoryCardHandler(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// --- EMPLOYEE VISITS HANDLERS ---
+
+type EmployeeVisit struct {
+	ID              int64    `json:"id"`
+	EmployeeID      string   `json:"employeeId"`
+	ContractID      *int64   `json:"contractId,omitempty"`
+	ClinicID        string   `json:"clinicId"`
+	VisitDate       string   `json:"visitDate"`
+	CheckInTime     *string  `json:"checkInTime,omitempty"`
+	CheckOutTime    *string  `json:"checkOutTime,omitempty"`
+	Status          string   `json:"status"`
+	RouteSheetID    *int64   `json:"routeSheetId,omitempty"`
+	DocumentsIssued []string `json:"documentsIssued,omitempty"`
+	RegisteredBy    *string  `json:"registeredBy,omitempty"`
+	Notes           *string  `json:"notes,omitempty"`
+	CreatedAt       string   `json:"createdAt"`
+	UpdatedAt       string   `json:"updatedAt"`
+}
+
+// POST /api/employee-visits
+func createEmployeeVisitHandler(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		EmployeeID   string  `json:"employeeId"`
+		ContractID   *int64  `json:"contractId,omitempty"`
+		ClinicID     string  `json:"clinicId"`
+		VisitDate    string  `json:"visitDate,omitempty"`
+		RegisteredBy *string `json:"registeredBy,omitempty"`
+		Notes        *string `json:"notes,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	if in.EmployeeID == "" || in.ClinicID == "" {
+		errorResponse(w, http.StatusBadRequest, "employeeId and clinicId are required")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	visitDate := in.VisitDate
+	if visitDate == "" {
+		visitDate = time.Now().Format("2006-01-02")
+	}
+
+	checkInTime := time.Now().Format(time.RFC3339)
+
+	var id int64
+	err := db.QueryRow(ctx, `
+INSERT INTO employee_visits (employee_id, contract_id, clinic_id, visit_date, check_in_time, status, registered_by, notes, documents_issued)
+VALUES ($1, $2, $3, $4, $5, 'registered', $6, $7, '[]'::jsonb)
+RETURNING id
+`, in.EmployeeID, in.ContractID, in.ClinicID, visitDate, checkInTime, in.RegisteredBy, in.Notes).Scan(&id)
+	if err != nil {
+		log.Printf("createEmployeeVisit error: %v", err)
+		errorResponse(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	var visit EmployeeVisit
+	var createdAt, updatedAt time.Time
+	var routeSheetID *int64
+	err = db.QueryRow(ctx, `
+SELECT id, employee_id, contract_id, clinic_id, visit_date, check_in_time, check_out_time, status, route_sheet_id, documents_issued, registered_by, notes, created_at, updated_at
+FROM employee_visits WHERE id = $1
+`, id).Scan(
+		&visit.ID, &visit.EmployeeID, &visit.ContractID, &visit.ClinicID, &visit.VisitDate,
+		&visit.CheckInTime, &visit.CheckOutTime, &visit.Status, &routeSheetID,
+		&visit.DocumentsIssued, &visit.RegisteredBy, &visit.Notes, &createdAt, &updatedAt,
+	)
+	if err != nil {
+		log.Printf("getEmployeeVisit error: %v", err)
+		errorResponse(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	visit.RouteSheetID = routeSheetID
+	visit.CreatedAt = createdAt.Format(time.RFC3339)
+	visit.UpdatedAt = updatedAt.Format(time.RFC3339)
+
+	jsonResponse(w, http.StatusCreated, visit)
+}
+
+// GET /api/employee-visits?clinicId=...&contractId=...&employeeId=...&status=...&date=...
+func listEmployeeVisitsHandler(w http.ResponseWriter, r *http.Request) {
+	clinicID := r.URL.Query().Get("clinicId")
+	contractID := r.URL.Query().Get("contractId")
+	employeeID := r.URL.Query().Get("employeeId")
+	status := r.URL.Query().Get("status")
+	date := r.URL.Query().Get("date")
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	query := `
+SELECT id, employee_id, contract_id, clinic_id, visit_date, check_in_time, check_out_time, status, route_sheet_id, documents_issued, registered_by, notes, created_at, updated_at
+FROM employee_visits WHERE 1=1
+`
+	args := []any{}
+	argIndex := 1
+
+	if clinicID != "" {
+		query += fmt.Sprintf(" AND clinic_id = $%d", argIndex)
+		args = append(args, clinicID)
+		argIndex++
+	}
+	if contractID != "" {
+		query += fmt.Sprintf(" AND contract_id = $%d", argIndex)
+		args = append(args, contractID)
+		argIndex++
+	}
+	if employeeID != "" {
+		query += fmt.Sprintf(" AND employee_id = $%d", argIndex)
+		args = append(args, employeeID)
+		argIndex++
+	}
+	if status != "" {
+		query += fmt.Sprintf(" AND status = $%d", argIndex)
+		args = append(args, status)
+		argIndex++
+	}
+	if date != "" {
+		query += fmt.Sprintf(" AND visit_date = $%d", argIndex)
+		args = append(args, date)
+		argIndex++
+	}
+
+	query += " ORDER BY visit_date DESC, check_in_time DESC"
+
+	rows, err := db.Query(ctx, query, args...)
+	if err != nil {
+		log.Printf("listEmployeeVisits error: %v", err)
+		errorResponse(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	defer rows.Close()
+
+	visits := []EmployeeVisit{}
+	for rows.Next() {
+		var visit EmployeeVisit
+		var createdAt, updatedAt time.Time
+		var routeSheetID *int64
+		err := rows.Scan(
+			&visit.ID, &visit.EmployeeID, &visit.ContractID, &visit.ClinicID, &visit.VisitDate,
+			&visit.CheckInTime, &visit.CheckOutTime, &visit.Status, &routeSheetID,
+			&visit.DocumentsIssued, &visit.RegisteredBy, &visit.Notes, &createdAt, &updatedAt,
+		)
+		if err != nil {
+			log.Printf("scan employee visit error: %v", err)
+			continue
+		}
+		visit.RouteSheetID = routeSheetID
+		visit.CreatedAt = createdAt.Format(time.RFC3339)
+		visit.UpdatedAt = updatedAt.Format(time.RFC3339)
+		visits = append(visits, visit)
+	}
+
+	jsonResponse(w, http.StatusOK, visits)
+}
+
+// PATCH /api/employee-visits/{id}
+func updateEmployeeVisitHandler(w http.ResponseWriter, r *http.Request) {
+	var id int64
+	_, err := fmt.Sscanf(r.URL.Path, "/api/employee-visits/%d", &id)
+	if err != nil || id <= 0 {
+		errorResponse(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	var patch map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	if v, ok := patch["status"]; ok {
+		status, _ := v.(string)
+		_, err = db.Exec(ctx, `UPDATE employee_visits SET status = $1, updated_at = NOW() WHERE id = $2`, status, id)
+		if err != nil {
+			log.Printf("update status error: %v", err)
+			errorResponse(w, http.StatusInternalServerError, "db error")
+			return
+		}
+	}
+
+	if v, ok := patch["checkOutTime"]; ok {
+		checkOutTime, _ := v.(string)
+		_, err = db.Exec(ctx, `UPDATE employee_visits SET check_out_time = $1, updated_at = NOW() WHERE id = $2`, checkOutTime, id)
+		if err != nil {
+			log.Printf("update checkOutTime error: %v", err)
+			errorResponse(w, http.StatusInternalServerError, "db error")
+			return
+		}
+	}
+
+	if v, ok := patch["routeSheetId"]; ok {
+		var routeSheetID *int64
+		if v != nil {
+			if idVal, ok := v.(float64); ok {
+				val := int64(idVal)
+				routeSheetID = &val
+			}
+		}
+		_, err = db.Exec(ctx, `UPDATE employee_visits SET route_sheet_id = $1, updated_at = NOW() WHERE id = $2`, routeSheetID, id)
+		if err != nil {
+			log.Printf("update routeSheetId error: %v", err)
+			errorResponse(w, http.StatusInternalServerError, "db error")
+			return
+		}
+	}
+
+	if v, ok := patch["documentsIssued"]; ok {
+		b, _ := json.Marshal(v)
+		_, err = db.Exec(ctx, `UPDATE employee_visits SET documents_issued = $1, updated_at = NOW() WHERE id = $2`, b, id)
+		if err != nil {
+			log.Printf("update documentsIssued error: %v", err)
+			errorResponse(w, http.StatusInternalServerError, "db error")
+			return
+		}
+	}
+
+	if v, ok := patch["notes"]; ok {
+		notes, _ := v.(string)
+		_, err = db.Exec(ctx, `UPDATE employee_visits SET notes = $1, updated_at = NOW() WHERE id = $2`, notes, id)
+		if err != nil {
+			log.Printf("update notes error: %v", err)
+			errorResponse(w, http.StatusInternalServerError, "db error")
+			return
+		}
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 // --- MAIN ---
 
 func main() {
@@ -1602,6 +1950,25 @@ func main() {
 	mux.HandleFunc("/api/route-sheets/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPatch {
 			updateRouteSheetHandler(w, r)
+			return
+		}
+		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+	})
+
+	// Employee Visits
+	mux.HandleFunc("/api/employee-visits", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			listEmployeeVisitsHandler(w, r)
+		case http.MethodPost:
+			createEmployeeVisitHandler(w, r)
+		default:
+			errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+	})
+	mux.HandleFunc("/api/employee-visits/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			updateEmployeeVisitHandler(w, r)
 			return
 		}
 		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")

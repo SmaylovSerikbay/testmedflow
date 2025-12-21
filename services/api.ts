@@ -369,5 +369,56 @@ export async function apiUpdateAmbulatoryCard(id: number, patch: Partial<ApiAmbu
   });
 }
 
+// --- EMPLOYEE VISITS ---
+
+export interface ApiEmployeeVisit {
+  id: number;
+  employeeId: string;
+  contractId?: number;
+  clinicId: string;
+  visitDate: string;
+  checkInTime?: string;
+  checkOutTime?: string;
+  status: 'registered' | 'in_progress' | 'completed' | 'cancelled';
+  routeSheetId?: number;
+  documentsIssued?: string[];
+  registeredBy?: string;
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export async function apiCreateEmployeeVisit(visit: Omit<ApiEmployeeVisit, 'id' | 'createdAt' | 'updatedAt'>): Promise<ApiEmployeeVisit> {
+  return await request<ApiEmployeeVisit>('/api/employee-visits', {
+    method: 'POST',
+    body: JSON.stringify(visit),
+  });
+}
+
+export async function apiListEmployeeVisits(params: {
+  clinicId?: string;
+  contractId?: string;
+  employeeId?: string;
+  status?: string;
+  date?: string;
+}): Promise<ApiEmployeeVisit[]> {
+  const queryParams = new URLSearchParams();
+  if (params.clinicId) queryParams.append('clinicId', params.clinicId);
+  if (params.contractId) queryParams.append('contractId', params.contractId);
+  if (params.employeeId) queryParams.append('employeeId', params.employeeId);
+  if (params.status) queryParams.append('status', params.status);
+  if (params.date) queryParams.append('date', params.date);
+
+  const query = queryParams.toString();
+  return await request<ApiEmployeeVisit[]>(`/api/employee-visits${query ? '?' + query : ''}`);
+}
+
+export async function apiUpdateEmployeeVisit(id: number, patch: Partial<ApiEmployeeVisit>): Promise<void> {
+  await request(`/api/employee-visits/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+
 
 

@@ -40,14 +40,30 @@ export interface Employee {
 export interface EmployeeVisit {
   id: string;
   employeeId: string;
-  contractId: string;
+  contractId?: string; // Может быть null для индивидуальных пациентов
+  clinicId: string;
   visitDate: string; // Дата посещения
   checkInTime?: string; // Время регистрации входа
   checkOutTime?: string; // Время регистрации выхода
   status: 'registered' | 'in_progress' | 'completed' | 'cancelled'; // Статус прохождения осмотра
+  routeSheetId?: string; // ID маршрутного листа (если создан)
   documentsIssued?: string[]; // Выданные документы (список названий)
   registeredBy?: string; // ID сотрудника регистратуры
   notes?: string; // Примечания регистратуры
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+// Индивидуальный пациент (без договора)
+export interface IndividualPatient {
+  id: string; // Временный ID
+  fullName: string;
+  dateOfBirth: string;
+  gender: 'М' | 'Ж';
+  phone?: string;
+  address?: string;
+  position?: string; // Должность (если указана)
+  harmfulFactors?: string; // Вредные факторы (если указаны)
 }
 
 // Маршрут сотрудника (какие кабинеты он должен посетить)
@@ -68,8 +84,9 @@ export interface EmployeeRoute {
 
 // Амбулаторная карта сотрудника (Форма 052у)
 export interface AmbulatoryCard {
+  id?: string; // ID карты в базе
   employeeId: string;
-  contractId: string;
+  contractId?: string; // Может быть null для индивидуальных пациентов
   cardNumber?: string; // Номер карты
   
   // Паспортная часть
