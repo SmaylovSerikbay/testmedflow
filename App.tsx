@@ -61,8 +61,8 @@ const App: React.FC = () => {
             contractId: apiUser.contractId,
           };
           
-          // Если у врача нет clinicBin, но есть bin, обновляем пользователя в базе
-          if (apiUser.role === 'doctor' && !apiUser.clinicBin && apiUser.bin) {
+          // Если у врача или регистратора нет clinicBin, но есть bin, обновляем пользователя в базе
+          if ((apiUser.role === 'doctor' || apiUser.role === 'registration') && !apiUser.clinicBin && apiUser.bin) {
             try {
               await apiCreateUser({
                 uid: apiUser.uid,
@@ -78,7 +78,7 @@ const App: React.FC = () => {
                 createdAt: apiUser.createdAt,
               } as any);
             } catch (error) {
-              console.error('Error updating doctor clinicBin:', error);
+              console.error('Error updating doctor/registration clinicBin:', error);
             }
           }
           
@@ -145,8 +145,8 @@ const App: React.FC = () => {
         return;
       }
       
-      // Для врачей: если нет clinicBin, но есть bin, используем его
-      const clinicBin = apiUser.clinicBin || (apiUser.role === 'doctor' ? apiUser.bin : undefined);
+      // Для врачей и регистраторов: если нет clinicBin, но есть bin, используем его
+      const clinicBin = apiUser.clinicBin || ((apiUser.role === 'doctor' || apiUser.role === 'registration') ? apiUser.bin : undefined);
       
       const userData: UserProfile = {
         uid: apiUser.uid,
@@ -166,8 +166,8 @@ const App: React.FC = () => {
         contractId: apiUser.contractId,
       };
       
-      // Если у врача нет clinicBin, но есть bin, обновляем пользователя в базе
-      if (apiUser.role === 'doctor' && !apiUser.clinicBin && apiUser.bin) {
+      // Если у врача или регистратора нет clinicBin, но есть bin, обновляем пользователя в базе
+      if ((apiUser.role === 'doctor' || apiUser.role === 'registration') && !apiUser.clinicBin && apiUser.bin) {
         try {
           await apiCreateUser({
             uid: apiUser.uid,
@@ -183,7 +183,7 @@ const App: React.FC = () => {
             createdAt: apiUser.createdAt,
           } as any);
         } catch (error) {
-          console.error('Error updating doctor clinicBin:', error);
+          console.error('Error updating doctor/registration clinicBin:', error);
         }
       }
       

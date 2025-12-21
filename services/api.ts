@@ -67,7 +67,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export interface ApiUser {
   uid: string;
-  role: 'clinic' | 'organization' | 'doctor' | 'employee';
+  role: 'clinic' | 'organization' | 'doctor' | 'employee' | 'registration';
   bin?: string;
   companyName?: string;
   leaderName?: string;

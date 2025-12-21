@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { Doctor, UserProfile } from '../types';
-import { apiListDoctors, apiCreateDoctor, apiUpdateDoctor, apiDeleteDoctor, apiCreateUser } from '../services/api';
+import { apiListDoctors, apiCreateDoctor, apiUpdateDoctor, apiDeleteDoctor, apiCreateUser, apiGetUserByPhone } from '../services/api';
 import { 
   UserMdIcon, PlusIcon, TrashIcon, PenIcon, LoaderIcon, CheckShieldIcon
 } from './Icons';
@@ -130,7 +130,8 @@ const DoctorsList: React.FC<DoctorsListProps> = ({
           isChairman: doctorData.isChairman,
         });
 
-        if (cleanPhone && isMedicalSpecialty(doctorData.specialty)) {
+        // Обновляем аккаунт для врачей и регистраторов (если указан телефон)
+        if (cleanPhone && (isMedicalSpecialty(doctorData.specialty) || doctorData.specialty === 'Регистратор')) {
           await createOrUpdateDoctorAccount(String(editingDoctor.id), {
             phone: cleanPhone,
             specialty: doctorData.specialty,
@@ -149,7 +150,8 @@ const DoctorsList: React.FC<DoctorsListProps> = ({
           isChairman: doctorData.isChairman,
         });
 
-        if (cleanPhone && isMedicalSpecialty(doctorData.specialty)) {
+        // Создаем аккаунт для врачей и регистраторов (если указан телефон)
+        if (cleanPhone && (isMedicalSpecialty(doctorData.specialty) || doctorData.specialty === 'Регистратор')) {
           await createOrUpdateDoctorAccount(String(created.id), {
             phone: cleanPhone,
             specialty: doctorData.specialty,
@@ -174,22 +176,45 @@ const DoctorsList: React.FC<DoctorsListProps> = ({
     }
   }, [currentUser, editingDoctor, showToast, onDoctorsChange]);
 
-  // Функция создания аккаунта врача в системе (через новый API пользователей)
+  // Функция создания аккаунта врача или регистратора в системе (через новый API пользователей)
   const createOrUpdateDoctorAccount = async (doctorId: string, doctorData: any) => {
     try {
-      const userId = 'doctor_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-      await apiCreateUser({
-        uid: userId,
-        role: 'doctor',
-        phone: doctorData.phone,
-        doctorId,
-        clinicId: doctorData.clinicId,
-        clinicBin: doctorData.clinicBin,
-        specialty: doctorData.specialty,
-        createdAt: new Date().toISOString(),
-      } as any);
+      // Определяем роль: для регистратора - 'registration', для врачей - 'doctor'
+      const role = doctorData.specialty === 'Регистратор' ? 'registration' : 'doctor';
+      
+      // Проверяем, существует ли уже пользователь с таким телефоном
+      const existingUser = await apiGetUserByPhone(doctorData.phone);
+      
+      if (existingUser) {
+        // Обновляем существующего пользователя
+        await apiCreateUser({
+          uid: existingUser.uid,
+          role,
+          phone: doctorData.phone,
+          doctorId: role === 'doctor' ? doctorId : undefined,
+          clinicId: doctorData.clinicId,
+          clinicBin: doctorData.clinicBin,
+          specialty: role === 'doctor' ? doctorData.specialty : undefined,
+          createdAt: existingUser.createdAt || new Date().toISOString(),
+        } as any);
+        console.log(`✅ Updated existing ${role} account for phone:`, doctorData.phone);
+      } else {
+        // Создаем нового пользователя
+        const userId = `${role}_` + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        await apiCreateUser({
+          uid: userId,
+          role,
+          phone: doctorData.phone,
+          doctorId: role === 'doctor' ? doctorId : undefined,
+          clinicId: doctorData.clinicId,
+          clinicBin: doctorData.clinicBin,
+          specialty: role === 'doctor' ? doctorData.specialty : undefined,
+          createdAt: new Date().toISOString(),
+        } as any);
+        console.log(`✅ Created new ${role} account for phone:`, doctorData.phone);
+      }
     } catch (error) {
-      console.error('Error creating doctor account:', error);
+      console.error('Error creating/updating doctor/registration account:', error);
     }
   };
 
@@ -463,8 +488,8 @@ const DoctorModal: React.FC<DoctorModalProps> = ({ doctor, onClose, onSave, isSa
     if (!name.trim() || !specialty.trim()) {
       return;
     }
-    // Телефон обязателен только для врачей
-    if (isMedicalSpecialty(specialty) && !phone.trim()) {
+    // Телефон обязателен для врачей и регистраторов
+    if ((isMedicalSpecialty(specialty) || specialty === 'Регистратор') && !phone.trim()) {
       return;
     }
     onSave({ name: name.trim(), specialty, phone: phone.trim(), isChairman });
@@ -518,7 +543,7 @@ const DoctorModal: React.FC<DoctorModalProps> = ({ doctor, onClose, onSave, isSa
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-2">
               Номер телефона 
-              {isMedicalSpecialty(specialty) && (
+              {(isMedicalSpecialty(specialty) || specialty === 'Регистратор') && (
                 <span className="text-red-500">*</span>
               )}
               <span className="text-slate-400 text-xs"> (для создания аккаунта)</span>
@@ -530,10 +555,12 @@ const DoctorModal: React.FC<DoctorModalProps> = ({ doctor, onClose, onSave, isSa
               className="w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               placeholder="+7 (XXX) XXX-XX-XX"
               disabled={isSaving}
-              required={isMedicalSpecialty(specialty)}
+              required={isMedicalSpecialty(specialty) || specialty === 'Регистратор'}
             />
             <p className="text-xs text-slate-400 mt-1">
-              {isMedicalSpecialty(specialty) 
+              {specialty === 'Регистратор'
+                ? 'Телефон обязателен для создания аккаунта регистратора в системе'
+                : isMedicalSpecialty(specialty) 
                 ? 'Телефон обязателен для создания аккаунта врача в системе'
                 : 'Телефон необязателен для вспомогательного персонала'}
             </p>
@@ -568,7 +595,7 @@ const DoctorModal: React.FC<DoctorModalProps> = ({ doctor, onClose, onSave, isSa
                 isSaving || 
                 !name.trim() || 
                 !specialty.trim() || 
-                (isMedicalSpecialty(specialty) && !phone.replace(/\D/g, '').trim())
+                ((isMedicalSpecialty(specialty) || specialty === 'Регистратор') && !phone.replace(/\D/g, '').trim())
               }
               className="flex-1 px-4 py-2.5 bg-slate-900 text-white rounded-xl font-bold hover:bg-black transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >

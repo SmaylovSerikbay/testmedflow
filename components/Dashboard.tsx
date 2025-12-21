@@ -154,10 +154,10 @@ const useUserProfile = () => {
             const apiUser = await apiGetUserByPhone(phone);
             
             if (apiUser) {
-                // Для врачей: если нет clinicBin, но есть bin, используем его
-                const clinicBin = apiUser.clinicBin || (apiUser.role === 'doctor' ? apiUser.bin : undefined);
+                // Для врачей и регистраторов: если нет clinicBin, но есть bin, используем его
+                const clinicBin = apiUser.clinicBin || ((apiUser.role === 'doctor' || apiUser.role === 'registration') ? apiUser.bin : undefined);
                 
-                const userData: UserProfile = {
+const userData: UserProfile = {
                     uid: apiUser.uid,
                     role: apiUser.role,
                     bin: apiUser.bin,
@@ -175,8 +175,8 @@ const useUserProfile = () => {
                     contractId: apiUser.contractId,
                 };
                 
-                // Если у врача нет clinicBin, но есть bin, обновляем пользователя в базе
-                if (apiUser.role === 'doctor' && !apiUser.clinicBin && apiUser.bin) {
+                // Если у врача или регистратора нет clinicBin, но есть bin, обновляем пользователя в базе
+                if ((apiUser.role === 'doctor' || apiUser.role === 'registration') && !apiUser.clinicBin && apiUser.bin) {
                     try {
                         await apiCreateUser({
                             uid: apiUser.uid,
@@ -192,7 +192,7 @@ const useUserProfile = () => {
                             createdAt: apiUser.createdAt,
                         } as any);
                     } catch (error) {
-                        console.error('Error updating doctor clinicBin:', error);
+                        console.error('Error updating doctor/registration clinicBin:', error);
                     }
                 }
                 

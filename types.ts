@@ -8,9 +8,10 @@ export interface UserProfile {
   leaderName?: string;
   phone: string;
   createdAt?: string;
-  // Для врачей
+  // Для врачей и регистраторов
   doctorId?: string; // ID врача в клинике
-  clinicId?: string; // ID клиники, к которой привязан врач
+  clinicId?: string; // ID клиники, к которой привязан врач/регистратор
+  clinicBin?: string; // БИН клиники
   specialty?: string; // Специальность врача
   // Для сотрудников
   employeeId?: string; // ID сотрудника в контингенте
