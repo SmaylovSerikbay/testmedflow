@@ -412,24 +412,26 @@ const Dashboard: React.FC = () => {
       // Оптимистичное обновление для мгновенного отображения изменений
       updateContractOptimistic(id, updates);
       await apiUpdateContract(numericId, updates as any);
-      // Обновляем список контрактов после успешного обновления для синхронизации с сервером
-      // Используем setTimeout для гарантии, что обновление произойдет после завершения запроса
-      setTimeout(() => {
-        refetchContracts();
-      }, 100);
+      // Немедленно обновляем список контрактов для синхронизации с сервером
+      refetchContracts();
     } catch (e) {
       console.error("Update error", e);
       showToast('error', 'Ошибка обновления договора');
       // В случае ошибки откатываем оптимистичное обновление
-      setTimeout(() => {
-        refetchContracts();
-      }, 100);
+      refetchContracts();
     }
   }, [showToast, refetchContracts, updateContractOptimistic]);
 
   const selectedContract = useMemo(() => {
     return contracts.find(c => c.id === selectedContractId);
   }, [contracts, selectedContractId]);
+  
+  // Добавляем ключ для отслеживания изменений контракта
+  const selectedContractKey = useMemo(() => {
+    if (!selectedContract) return null;
+    // Используем ID + timestamp последнего обновления employees для принудительного обновления
+    return `${selectedContract.id}_${selectedContract.employees?.length || 0}_${JSON.stringify(selectedContract.employees?.map(e => e.id) || [])}`;
+  }, [selectedContract]);
 
   const { doctors, refetchDoctors } = useDoctors(currentUser, selectedContract);
 
@@ -470,6 +472,7 @@ const Dashboard: React.FC = () => {
         updateContract={updateContract}
         showToast={showToast}
         refetchContracts={refetchContracts}
+        refetchDoctors={refetchDoctors}
       />
     </div>
   );
@@ -636,6 +639,7 @@ interface MainContentProps {
   updateContract: (id: string, updates: Partial<Contract>) => Promise<void>;
   showToast: (type: ToastType, message: string, duration?: number) => void;
   refetchContracts: () => void;
+  refetchDoctors: () => void;
 }
 
 const MainContent: React.FC<MainContentProps> = ({ 
@@ -655,6 +659,7 @@ const MainContent: React.FC<MainContentProps> = ({
       <div className="flex-1 overflow-hidden">
         <React.Suspense fallback={<div className="flex items-center justify-center h-full"><LoaderIcon className="w-8 h-8 animate-spin text-slate-300" /></div>}>
           <ContractWorkspace
+            key={selectedContractKey || selectedContract.id} // Принудительное обновление при изменении контракта или сотрудников
             currentUser={currentUser}
             contract={selectedContract}
             doctors={doctors}

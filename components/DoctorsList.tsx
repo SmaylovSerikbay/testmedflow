@@ -101,7 +101,7 @@ const DoctorsList: React.FC<DoctorsListProps> = ({
           await apiDeleteDoctor(currentUser.uid, Number(doctorId));
           showToast('success', 'Врач успешно удален');
           setConfirmDialog(prev => ({ ...prev, isOpen: false }));
-          // Обновляем список врачей
+          // Немедленно обновляем список врачей
           if (onDoctorsChange) {
             onDoctorsChange();
           }
@@ -112,7 +112,7 @@ const DoctorsList: React.FC<DoctorsListProps> = ({
         }
       }
     });
-  }, [currentUser, doctors, showToast]);
+  }, [currentUser, doctors, showToast, onDoctorsChange]);
 
   const handleSaveDoctor = useCallback(async (doctorData: { name: string; specialty: string; phone: string; isChairman: boolean }) => {
     if (!currentUser) return;
@@ -162,7 +162,7 @@ const DoctorsList: React.FC<DoctorsListProps> = ({
       }
       setIsModalOpen(false);
       setEditingDoctor(null);
-      // Обновляем список врачей
+      // Немедленно обновляем список врачей
       if (onDoctorsChange) {
         onDoctorsChange();
       }
@@ -172,7 +172,7 @@ const DoctorsList: React.FC<DoctorsListProps> = ({
     } finally {
       setIsSaving(false);
     }
-  }, [currentUser, editingDoctor, showToast]);
+  }, [currentUser, editingDoctor, showToast, onDoctorsChange]);
 
   // Функция создания аккаунта врача в системе (через новый API пользователей)
   const createOrUpdateDoctorAccount = async (doctorId: string, doctorData: any) => {
