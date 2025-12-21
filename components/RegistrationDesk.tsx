@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { UserProfile, Contract, Employee, EmployeeVisit, EmployeeRoute, DoctorRouteSheet } from '../types';
+import { UserProfile, Contract, Employee, EmployeeVisit, EmployeeRoute, DoctorRouteSheet, IndividualPatient } from '../types';
 import { 
   LoaderIcon, 
   SearchIcon, 
@@ -12,7 +12,8 @@ import {
   ArrowRightIcon,
   CheckCircleIcon,
   XCircleIcon,
-  AlertCircleIcon
+  AlertCircleIcon,
+  XIcon
 } from './Icons';
 import {
   apiListContractsByBin,
@@ -20,7 +21,14 @@ import {
   apiListRouteSheets,
   apiGetAmbulatoryCard,
   apiListAmbulatoryCardsByContract,
+  apiCreateEmployeeVisit,
+  apiUpdateEmployeeVisit,
+  apiListEmployeeVisits,
+  apiCreateRouteSheet,
+  apiListDoctors,
 } from '../services/api';
+import { IndividualPatient } from '../types';
+import { createRouteSheetsForAllSpecialties } from '../utils/routeSheetGenerator';
 
 interface RegistrationDeskProps {
   currentUser: UserProfile;
@@ -32,9 +40,14 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
+  const [selectedIndividualPatient, setSelectedIndividualPatient] = useState<IndividualPatient | null>(null);
   const [employeeRoute, setEmployeeRoute] = useState<EmployeeRoute | null>(null);
   const [employeeVisit, setEmployeeVisit] = useState<EmployeeVisit | null>(null);
   const [routeSheets, setRouteSheets] = useState<DoctorRouteSheet[]>([]);
+  const [doctors, setDoctors] = useState<any[]>([]);
+  const [visits, setVisits] = useState<EmployeeVisit[]>([]);
+  const [showIndividualPatientModal, setShowIndividualPatientModal] = useState(false);
+  const [isRegistering, setIsRegistering] = useState(false);
 
   // Загрузка договоров клиники
   useEffect(() => {
@@ -81,6 +94,23 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
     loadContracts();
   }, [currentUser]);
 
+  // Загрузка врачей клиники
+  useEffect(() => {
+    const loadDoctors = async () => {
+      if (!currentUser.clinicId && !currentUser.uid) return;
+
+      try {
+        const clinicUid = currentUser.clinicId || currentUser.uid;
+        const doctorsList = await apiListDoctors(clinicUid);
+        setDoctors(doctorsList);
+      } catch (error) {
+        console.error('Error loading doctors:', error);
+      }
+    };
+
+    loadDoctors();
+  }, [currentUser]);
+
   // Загрузка маршрутных листов для выбранного договора
   useEffect(() => {
     const loadRouteSheets = async () => {
@@ -102,13 +132,62 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
         }));
 
         setRouteSheets(sheets);
+        
+        // Обновляем маршрут выбранного сотрудника, если он есть
+        if (selectedEmployee) {
+          const route = getEmployeeRoute(selectedEmployee.id);
+          setEmployeeRoute(route);
+        }
       } catch (error) {
         console.error('Error loading route sheets:', error);
       }
     };
 
     loadRouteSheets();
-  }, [selectedContract]);
+    
+    // Обновляем маршрутные листы каждые 10 секунд для отслеживания прогресса
+    const interval = setInterval(loadRouteSheets, 10000);
+    return () => clearInterval(interval);
+  }, [selectedContract, selectedEmployee?.id]);
+
+  // Загрузка посещений за сегодня
+  useEffect(() => {
+    const loadVisits = async () => {
+      if (!currentUser.clinicId && !currentUser.bin) return;
+
+      try {
+        const clinicId = currentUser.clinicId || currentUser.uid;
+        const today = new Date().toISOString().split('T')[0];
+        const visitsList = await apiListEmployeeVisits({
+          clinicId,
+          date: today,
+        });
+        
+        const visitsData: EmployeeVisit[] = visitsList.map(v => ({
+          id: String(v.id),
+          employeeId: v.employeeId,
+          contractId: v.contractId ? String(v.contractId) : undefined,
+          clinicId: v.clinicId,
+          visitDate: v.visitDate,
+          checkInTime: v.checkInTime,
+          checkOutTime: v.checkOutTime,
+          status: v.status,
+          routeSheetId: v.routeSheetId ? String(v.routeSheetId) : undefined,
+          documentsIssued: v.documentsIssued,
+          registeredBy: v.registeredBy,
+          notes: v.notes,
+          createdAt: v.createdAt,
+          updatedAt: v.updatedAt,
+        }));
+        
+        setVisits(visitsData);
+      } catch (error) {
+        console.error('Error loading visits:', error);
+      }
+    };
+
+    loadVisits();
+  }, [currentUser]);
 
   // Поиск сотрудника
   const filteredEmployees = selectedContract?.employees?.filter(emp => 
@@ -149,50 +228,243 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
   // Регистрация входа сотрудника
   const handleCheckIn = async (employee: Employee) => {
     if (!selectedContract) return;
+    setIsRegistering(true);
 
-    // TODO: Вызов API для создания записи о посещении
-    const visit: EmployeeVisit = {
-      id: `visit_${Date.now()}`,
-      employeeId: employee.id,
-      contractId: selectedContract.id,
-      visitDate: new Date().toISOString().split('T')[0],
-      checkInTime: new Date().toISOString(),
-      status: 'in_progress',
-      registeredBy: currentUser.uid,
-    };
+    try {
+      const clinicId = currentUser.clinicId || currentUser.uid;
+      const contractIdNum = parseInt(selectedContract.id, 10);
+      
+      // Создаем посещение через API
+      const visit = await apiCreateEmployeeVisit({
+        employeeId: employee.id,
+        contractId: contractIdNum,
+        clinicId,
+        visitDate: new Date().toISOString().split('T')[0],
+        registeredBy: currentUser.uid,
+      });
 
-    setEmployeeVisit(visit);
-    setSelectedEmployee(employee);
-    
-    const route = getEmployeeRoute(employee.id);
-    setEmployeeRoute(route);
+      // Проверяем, есть ли маршрутные листы для этого договора
+      const existingSheets = await apiListRouteSheets({ contractId: contractIdNum });
+      if (existingSheets.length === 0) {
+        // Создаем маршрутные листы для всех необходимых специализаций
+        await createRouteSheetsForAllSpecialties(
+          selectedContract.id,
+          selectedContract.employees || [],
+          doctors
+        );
+      }
+
+      // Загружаем обновленные маршрутные листы
+      const updatedSheets = await apiListRouteSheets({ contractId: contractIdNum });
+      const sheets: DoctorRouteSheet[] = updatedSheets.map(s => ({
+        id: String(s.id),
+        doctorId: s.doctorId,
+        contractId: String(s.contractId),
+        specialty: s.specialty,
+        virtualDoctor: s.virtualDoctor,
+        employees: s.employees,
+        createdAt: s.createdAt,
+      }));
+      setRouteSheets(sheets);
+
+      const visitData: EmployeeVisit = {
+        id: String(visit.id),
+        employeeId: visit.employeeId,
+        contractId: visit.contractId ? String(visit.contractId) : undefined,
+        clinicId: visit.clinicId,
+        visitDate: visit.visitDate,
+        checkInTime: visit.checkInTime,
+        checkOutTime: visit.checkOutTime,
+        status: visit.status,
+        routeSheetId: visit.routeSheetId ? String(visit.routeSheetId) : undefined,
+        documentsIssued: visit.documentsIssued,
+        registeredBy: visit.registeredBy,
+        notes: visit.notes,
+        createdAt: visit.createdAt,
+        updatedAt: visit.updatedAt,
+      };
+
+      setEmployeeVisit(visitData);
+      setSelectedEmployee(employee);
+      
+      const route = getEmployeeRoute(employee.id);
+      setEmployeeRoute(route);
+
+      // Обновляем список посещений
+      const today = new Date().toISOString().split('T')[0];
+      const visitsList = await apiListEmployeeVisits({
+        clinicId,
+        date: today,
+      });
+      setVisits(visitsList.map(v => ({
+        id: String(v.id),
+        employeeId: v.employeeId,
+        contractId: v.contractId ? String(v.contractId) : undefined,
+        clinicId: v.clinicId,
+        visitDate: v.visitDate,
+        checkInTime: v.checkInTime,
+        checkOutTime: v.checkOutTime,
+        status: v.status,
+        routeSheetId: v.routeSheetId ? String(v.routeSheetId) : undefined,
+        documentsIssued: v.documentsIssued,
+        registeredBy: v.registeredBy,
+        notes: v.notes,
+        createdAt: v.createdAt,
+        updatedAt: v.updatedAt,
+      })));
+    } catch (error) {
+      console.error('Error checking in employee:', error);
+      alert('Ошибка при регистрации сотрудника');
+    } finally {
+      setIsRegistering(false);
+    }
   };
 
   // Регистрация выхода сотрудника
   const handleCheckOut = async () => {
     if (!employeeVisit) return;
+    setIsRegistering(true);
 
-    // TODO: Вызов API для обновления записи о посещении
-    const updatedVisit: EmployeeVisit = {
-      ...employeeVisit,
-      checkOutTime: new Date().toISOString(),
-      status: 'completed',
-    };
+    try {
+      const visitId = parseInt(employeeVisit.id, 10);
+      if (isNaN(visitId)) return;
 
-    setEmployeeVisit(updatedVisit);
+      await apiUpdateEmployeeVisit(visitId, {
+        checkOutTime: new Date().toISOString(),
+        status: 'completed',
+      });
+
+      const updatedVisit: EmployeeVisit = {
+        ...employeeVisit,
+        checkOutTime: new Date().toISOString(),
+        status: 'completed',
+      };
+
+      setEmployeeVisit(updatedVisit);
+
+      // Обновляем список посещений
+      const clinicId = currentUser.clinicId || currentUser.uid;
+      const today = new Date().toISOString().split('T')[0];
+      const visitsList = await apiListEmployeeVisits({
+        clinicId,
+        date: today,
+      });
+      setVisits(visitsList.map(v => ({
+        id: String(v.id),
+        employeeId: v.employeeId,
+        contractId: v.contractId ? String(v.contractId) : undefined,
+        clinicId: v.clinicId,
+        visitDate: v.visitDate,
+        checkInTime: v.checkInTime,
+        checkOutTime: v.checkOutTime,
+        status: v.status,
+        routeSheetId: v.routeSheetId ? String(v.routeSheetId) : undefined,
+        documentsIssued: v.documentsIssued,
+        registeredBy: v.registeredBy,
+        notes: v.notes,
+        createdAt: v.createdAt,
+        updatedAt: v.updatedAt,
+      })));
+    } catch (error) {
+      console.error('Error checking out employee:', error);
+      alert('Ошибка при регистрации выхода');
+    } finally {
+      setIsRegistering(false);
+    }
   };
 
   // Выдача документов
-  const handleIssueDocument = (documentType: string) => {
-    // TODO: Логика выдачи документов
+  const handleIssueDocument = async (documentType: string) => {
     if (!employeeVisit) return;
-    
-    const updatedVisit: EmployeeVisit = {
-      ...employeeVisit,
-      documentsIssued: [...(employeeVisit.documentsIssued || []), documentType],
-    };
-    
-    setEmployeeVisit(updatedVisit);
+    setIsRegistering(true);
+
+    try {
+      const visitId = parseInt(employeeVisit.id, 10);
+      if (isNaN(visitId)) return;
+
+      const updatedDocuments = [...(employeeVisit.documentsIssued || []), documentType];
+      
+      await apiUpdateEmployeeVisit(visitId, {
+        documentsIssued: updatedDocuments,
+      });
+
+      const updatedVisit: EmployeeVisit = {
+        ...employeeVisit,
+        documentsIssued: updatedDocuments,
+      };
+      
+      setEmployeeVisit(updatedVisit);
+    } catch (error) {
+      console.error('Error issuing document:', error);
+      alert('Ошибка при выдаче документа');
+    } finally {
+      setIsRegistering(false);
+    }
+  };
+
+  // Регистрация индивидуального пациента
+  const handleRegisterIndividualPatient = async (patient: IndividualPatient) => {
+    setIsRegistering(true);
+
+    try {
+      const clinicId = currentUser.clinicId || currentUser.uid;
+      
+      // Создаем посещение для индивидуального пациента
+      const visit = await apiCreateEmployeeVisit({
+        employeeId: patient.id,
+        contractId: undefined, // Индивидуальный пациент
+        clinicId,
+        visitDate: new Date().toISOString().split('T')[0],
+        registeredBy: currentUser.uid,
+        notes: `Индивидуальный пациент: ${patient.fullName}`,
+      });
+
+      const visitData: EmployeeVisit = {
+        id: String(visit.id),
+        employeeId: visit.employeeId,
+        contractId: undefined,
+        clinicId: visit.clinicId,
+        visitDate: visit.visitDate,
+        checkInTime: visit.checkInTime,
+        checkOutTime: visit.checkOutTime,
+        status: visit.status,
+        routeSheetId: visit.routeSheetId ? String(visit.routeSheetId) : undefined,
+        documentsIssued: visit.documentsIssued,
+        registeredBy: visit.registeredBy,
+        notes: visit.notes,
+        createdAt: visit.createdAt,
+        updatedAt: visit.updatedAt,
+      };
+
+      setEmployeeVisit(visitData);
+      setSelectedIndividualPatient(patient);
+      setShowIndividualPatientModal(false);
+
+      // Для индивидуальных пациентов создаем базовый маршрут (профпатолог + терапевт)
+      const route: EmployeeRoute = {
+        employeeId: patient.id,
+        contractId: undefined,
+        visitId: visitData.id,
+        routeItems: [
+          {
+            specialty: 'Профпатолог',
+            status: 'pending',
+            order: 1,
+          },
+          {
+            specialty: 'Терапевт',
+            status: 'pending',
+            order: 2,
+          },
+        ],
+      };
+      setEmployeeRoute(route);
+    } catch (error) {
+      console.error('Error registering individual patient:', error);
+      alert('Ошибка при регистрации пациента');
+    } finally {
+      setIsRegistering(false);
+    }
   };
 
   const handleLogout = () => {
@@ -322,14 +594,18 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
 
           {/* Правая панель: Информация о сотруднике и маршрут */}
           <div className="lg:col-span-2 space-y-4">
-            {selectedEmployee ? (
+            {(selectedEmployee || selectedIndividualPatient) ? (
               <>
-                {/* Информация о сотруднике */}
+                {/* Информация о сотруднике/пациенте */}
                 <div className="bg-white rounded-xl border border-slate-200 p-6">
                   <div className="flex items-start justify-between mb-4">
                     <div>
-                      <h2 className="text-xl font-bold text-slate-900">{selectedEmployee.name}</h2>
-                      <p className="text-sm text-slate-600 mt-1">{selectedEmployee.position}</p>
+                      <h2 className="text-xl font-bold text-slate-900">
+                        {selectedEmployee?.name || selectedIndividualPatient?.fullName}
+                      </h2>
+                      <p className="text-sm text-slate-600 mt-1">
+                        {selectedEmployee?.position || selectedIndividualPatient?.position || 'Индивидуальный пациент'}
+                      </p>
                     </div>
                     {employeeVisit && (
                       <div className="text-right">
@@ -344,25 +620,47 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
                   <div className="grid grid-cols-2 gap-4 mb-4">
                     <div>
                       <p className="text-xs text-slate-500">Дата рождения</p>
-                      <p className="text-sm font-medium text-slate-900">{selectedEmployee.dob || '—'}</p>
+                      <p className="text-sm font-medium text-slate-900">
+                        {selectedEmployee?.dob || selectedIndividualPatient?.dateOfBirth || '—'}
+                      </p>
                     </div>
                     <div>
                       <p className="text-xs text-slate-500">Пол</p>
-                      <p className="text-sm font-medium text-slate-900">{selectedEmployee.gender}</p>
+                      <p className="text-sm font-medium text-slate-900">
+                        {selectedEmployee?.gender || selectedIndividualPatient?.gender || '—'}
+                      </p>
                     </div>
-                    <div className="col-span-2">
-                      <p className="text-xs text-slate-500">Вредные факторы</p>
-                      <p className="text-sm font-medium text-amber-600 mt-1">{selectedEmployee.harmfulFactor || '—'}</p>
-                    </div>
+                    {selectedEmployee && (
+                      <div className="col-span-2">
+                        <p className="text-xs text-slate-500">Вредные факторы</p>
+                        <p className="text-sm font-medium text-amber-600 mt-1">{selectedEmployee.harmfulFactor || '—'}</p>
+                      </div>
+                    )}
+                    {selectedIndividualPatient && selectedIndividualPatient.harmfulFactors && (
+                      <div className="col-span-2">
+                        <p className="text-xs text-slate-500">Вредные факторы</p>
+                        <p className="text-sm font-medium text-amber-600 mt-1">{selectedIndividualPatient.harmfulFactors}</p>
+                      </div>
+                    )}
                   </div>
 
-                  {!employeeVisit && (
+                  {!employeeVisit && selectedEmployee && (
                     <button
                       onClick={() => handleCheckIn(selectedEmployee)}
-                      className="w-full py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
+                      disabled={isRegistering}
+                      className="w-full py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <CheckCircleIcon className="w-5 h-5" />
-                      Зарегистрировать вход
+                      {isRegistering ? (
+                        <>
+                          <LoaderIcon className="w-5 h-5 animate-spin" />
+                          Регистрация...
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircleIcon className="w-5 h-5" />
+                          Зарегистрировать вход
+                        </>
+                      )}
                     </button>
                   )}
 
