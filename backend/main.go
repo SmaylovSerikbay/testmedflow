@@ -1733,21 +1733,32 @@ RETURNING id
 
 	var visit EmployeeVisit
 	var createdAt, updatedAt time.Time
+	var visitDateDB time.Time
+	var checkInTimeDB, checkOutTimeDB *time.Time
 	var routeSheetID *int64
 	err = db.QueryRow(ctx, `
 SELECT id, employee_id, contract_id, clinic_id, visit_date, check_in_time, check_out_time, status, route_sheet_id, documents_issued, registered_by, notes, created_at, updated_at
 FROM employee_visits WHERE id = $1
 `, id).Scan(
-		&visit.ID, &visit.EmployeeID, &visit.ContractID, &visit.ClinicID, &visit.VisitDate,
-		&visit.CheckInTime, &visit.CheckOutTime, &visit.Status, &routeSheetID,
+		&visit.ID, &visit.EmployeeID, &visit.ContractID, &visit.ClinicID, &visitDateDB,
+		&checkInTimeDB, &checkOutTimeDB, &visit.Status, &routeSheetID,
 		&visit.DocumentsIssued, &visit.RegisteredBy, &visit.Notes, &createdAt, &updatedAt,
 	)
 	if err != nil {
 		log.Printf("getEmployeeVisit error: %v", err)
-		errorResponse(w, http.StatusInternalServerError, "db error")
+		errorResponse(w, http.StatusInternalServerError, fmt.Sprintf("db error: %v", err))
 		return
 	}
 
+	visit.VisitDate = visitDateDB.Format("2006-01-02")
+	if checkInTimeDB != nil {
+		checkInTimeStr := checkInTimeDB.Format(time.RFC3339)
+		visit.CheckInTime = &checkInTimeStr
+	}
+	if checkOutTimeDB != nil {
+		checkOutTimeStr := checkOutTimeDB.Format(time.RFC3339)
+		visit.CheckOutTime = &checkOutTimeStr
+	}
 	visit.RouteSheetID = routeSheetID
 	visit.CreatedAt = createdAt.Format(time.RFC3339)
 	visit.UpdatedAt = updatedAt.Format(time.RFC3339)
@@ -1813,15 +1824,26 @@ FROM employee_visits WHERE 1=1
 	for rows.Next() {
 		var visit EmployeeVisit
 		var createdAt, updatedAt time.Time
+		var visitDate time.Time
+		var checkInTime, checkOutTime *time.Time
 		var routeSheetID *int64
 		err := rows.Scan(
-			&visit.ID, &visit.EmployeeID, &visit.ContractID, &visit.ClinicID, &visit.VisitDate,
-			&visit.CheckInTime, &visit.CheckOutTime, &visit.Status, &routeSheetID,
+			&visit.ID, &visit.EmployeeID, &visit.ContractID, &visit.ClinicID, &visitDate,
+			&checkInTime, &checkOutTime, &visit.Status, &routeSheetID,
 			&visit.DocumentsIssued, &visit.RegisteredBy, &visit.Notes, &createdAt, &updatedAt,
 		)
 		if err != nil {
 			log.Printf("scan employee visit error: %v", err)
 			continue
+		}
+		visit.VisitDate = visitDate.Format("2006-01-02")
+		if checkInTime != nil {
+			checkInTimeStr := checkInTime.Format(time.RFC3339)
+			visit.CheckInTime = &checkInTimeStr
+		}
+		if checkOutTime != nil {
+			checkOutTimeStr := checkOutTime.Format(time.RFC3339)
+			visit.CheckOutTime = &checkOutTimeStr
 		}
 		visit.RouteSheetID = routeSheetID
 		visit.CreatedAt = createdAt.Format(time.RFC3339)
