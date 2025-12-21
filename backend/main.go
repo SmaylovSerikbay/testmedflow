@@ -389,18 +389,42 @@ CREATE TABLE IF NOT EXISTS employee_visits (
 	// Обновляем ambulatory_cards чтобы contract_id мог быть NULL для индивидуальных пациентов
 	// Используем SAVEPOINT для изоляции ошибок
 	_, _ = tx.Exec(ctx, `SAVEPOINT before_alter_ambulatory;`)
+
+	// Сначала удаляем старое ограничение UNIQUE из определения таблицы (если существует)
+	// PostgreSQL автоматически создает constraint с именем ambulatory_cards_employee_id_contract_id_key
+	_, _ = tx.Exec(ctx, `ALTER TABLE ambulatory_cards DROP CONSTRAINT IF EXISTS ambulatory_cards_employee_id_contract_id_key;`)
+
+	// Также пытаемся удалить другие возможные варианты имен
+	_, _ = tx.Exec(ctx, `ALTER TABLE ambulatory_cards DROP CONSTRAINT IF EXISTS ambulatory_cards_employee_id_contract_id_ukey;`)
+	_, _ = tx.Exec(ctx, `ALTER TABLE ambulatory_cards DROP CONSTRAINT IF EXISTS ambulatory_cards_employee_id_contract_id_unique;`)
+
+	// Удаляем индексы, если они существуют
+	_, _ = tx.Exec(ctx, `DROP INDEX IF EXISTS ambulatory_cards_employee_id_contract_id_key;`)
+	_, _ = tx.Exec(ctx, `DROP INDEX IF EXISTS ambulatory_cards_employee_contract_unique;`)
+
+	// Делаем contract_id nullable
 	_, err = tx.Exec(ctx, `ALTER TABLE ambulatory_cards ALTER COLUMN contract_id DROP NOT NULL;`)
 	if err != nil {
 		// Откатываемся к savepoint и продолжаем
 		_, _ = tx.Exec(ctx, `ROLLBACK TO SAVEPOINT before_alter_ambulatory;`)
+		log.Printf("Warning: could not alter contract_id column: %v", err)
 	}
 	_, _ = tx.Exec(ctx, `RELEASE SAVEPOINT before_alter_ambulatory;`)
 
-	// Убираем уникальное ограничение для индивидуальных пациентов
-	_, _ = tx.Exec(ctx, `SAVEPOINT before_drop_index;`)
-	_, _ = tx.Exec(ctx, `DROP INDEX IF EXISTS ambulatory_cards_employee_id_contract_id_key;`)
-	_, _ = tx.Exec(ctx, `DROP INDEX IF EXISTS ambulatory_cards_employee_contract_unique;`)
-	_, _ = tx.Exec(ctx, `RELEASE SAVEPOINT before_drop_index;`)
+	// Удаляем дубликаты перед созданием уникального индекса
+	// Оставляем только первую запись для каждой пары (employee_id, contract_id)
+	_, _ = tx.Exec(ctx, `SAVEPOINT before_remove_duplicates;`)
+	_, _ = tx.Exec(ctx, `
+		DELETE FROM ambulatory_cards ac1
+		WHERE ac1.id NOT IN (
+			SELECT MIN(ac2.id)
+			FROM ambulatory_cards ac2
+			WHERE ac2.contract_id IS NOT NULL
+			GROUP BY ac2.employee_id, ac2.contract_id
+		)
+		AND ac1.contract_id IS NOT NULL;
+	`)
+	_, _ = tx.Exec(ctx, `RELEASE SAVEPOINT before_remove_duplicates;`)
 
 	// Создаем уникальный индекс только для записей с contract_id (не для индивидуальных пациентов)
 	_, _ = tx.Exec(ctx, `SAVEPOINT before_create_unique_index;`)
@@ -1449,11 +1473,11 @@ VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8)
 RETURNING id
 `, in.EmployeeID, in.CardNumber, personalInfoJSON, anamnesisJSON, vitalsJSON, labTestsJSON, examinationsJSON, finalConclusionJSON).Scan(&id)
 	} else {
-		// Для пациентов по договору используем ON CONFLICT
+		// Для пациентов по договору используем ON CONFLICT с именем индекса
 		err = db.QueryRow(ctx, `
 INSERT INTO ambulatory_cards (employee_id, contract_id, card_number, personal_info, anamnesis, vitals, lab_tests, examinations, final_conclusion)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-ON CONFLICT (employee_id, contract_id) WHERE contract_id IS NOT NULL DO UPDATE SET
+ON CONFLICT ON CONSTRAINT ambulatory_cards_employee_contract_unique DO UPDATE SET
   card_number = EXCLUDED.card_number,
   personal_info = EXCLUDED.personal_info,
   anamnesis = EXCLUDED.anamnesis,
