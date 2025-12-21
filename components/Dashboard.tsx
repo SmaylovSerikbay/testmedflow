@@ -467,6 +467,7 @@ const Dashboard: React.FC = () => {
         contracts={contracts}
         doctors={doctors}
         selectedContract={selectedContract}
+        selectedContractKey={selectedContractKey}
         activeSidebarItem={activeSidebarItem}
         onContractSelect={setSelectedContractId}
         updateContract={updateContract}
@@ -634,6 +635,7 @@ interface MainContentProps {
   contracts: Contract[];
   doctors: Doctor[];
   selectedContract: Contract | undefined;
+  selectedContractKey: string | null;
   activeSidebarItem: string;
   onContractSelect: (id: string | null) => void;
   updateContract: (id: string, updates: Partial<Contract>) => Promise<void>;
@@ -647,6 +649,7 @@ const MainContent: React.FC<MainContentProps> = ({
   contracts,
   doctors,
   selectedContract,
+  selectedContractKey,
   activeSidebarItem,
   onContractSelect,
   updateContract,
@@ -655,11 +658,14 @@ const MainContent: React.FC<MainContentProps> = ({
   refetchDoctors
 }) => {
   if (activeSidebarItem === 'contracts' && selectedContract) {
+    // Безопасное получение ключа для ContractWorkspace
+    const workspaceKey = selectedContractKey || selectedContract?.id || 'default';
+    
     return (
       <div className="flex-1 overflow-hidden">
         <React.Suspense fallback={<div className="flex items-center justify-center h-full"><LoaderIcon className="w-8 h-8 animate-spin text-slate-300" /></div>}>
           <ContractWorkspace
-            key={selectedContractKey || selectedContract.id} // Принудительное обновление при изменении контракта или сотрудников
+            key={workspaceKey} // Принудительное обновление при изменении контракта или сотрудников
             currentUser={currentUser}
             contract={selectedContract}
             doctors={doctors}
