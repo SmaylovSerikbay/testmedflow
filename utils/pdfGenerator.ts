@@ -1,5 +1,5 @@
 import jsPDF from 'jspdf';
-import { Contract, Employee, Doctor, HealthGroup } from '../types';
+import { Contract, Employee, Doctor } from '../types';
 import { FACTOR_RULES, FactorRule } from '../factorRules';
 
 // Функция определения правил по вредным факторам
@@ -118,43 +118,39 @@ const addTextWithWrap = (doc: jsPDF, text: string, x: number, y: number, maxWidt
   return currentY;
 };
 
-// Обязательные специалисты для комиссии согласно п. 14 Приказа
-const MANDATORY_SPECIALISTS = [
-  'Терапевт',
-  'Хирург',
-  'Невропатолог',
-  'Оториноларинголог',
-  'Офтальмолог',
-  'Дерматовенеролог',
-  'Гинеколог',
-  'Рентгенолог',
-  'Врач по функциональной диагностике',
-  'Врач-лаборант'
-];
-
 // Автоматическое определение необходимых специалистов на основе вредных факторов
 const getRequiredSpecialtiesFromContract = (contract: Contract): string[] => {
+  if (!contract.employees || contract.employees.length === 0) return [];
+  
   const allSpecialties = new Set<string>();
   
-  // Профпатолог всегда нужен как председатель комиссии
-  allSpecialties.add('Профпатолог');
-
-  // Добавляем обязательных специалистов (согласно п. 14)
-  // В некоторых случаях можно сокращать, но для надежности добавляем всех
-  MANDATORY_SPECIALISTS.forEach(s => allSpecialties.add(s));
+  // Обязательный состав комиссии согласно п. 14 приказа № ҚР ДСМ-131/2020
+  const mandatorySpecialists = [
+    'Профпатолог', // Председатель
+    'Терапевт',
+    'Хирург',
+    'Невропатолог',
+    'Оториноларинголог',
+    'Офтальмолог',
+    'Дерматовенеролог',
+    'Гинеколог',
+    'Рентгенолог',
+    'Врач по функциональной диагностике',
+    'Врач-лаборант'
+  ];
   
-  if (contract.employees && contract.employees.length > 0) {
-    contract.employees.forEach(employee => {
-      if (employee.harmfulFactor) {
-        const rules = resolveFactorRules(employee.harmfulFactor);
-        rules.forEach(rule => {
-          rule.specialties.forEach(specialty => {
-            allSpecialties.add(specialty);
-          });
+  mandatorySpecialists.forEach(s => allSpecialties.add(s));
+  
+  contract.employees.forEach(employee => {
+    if (employee.harmfulFactor) {
+      const rules = resolveFactorRules(employee.harmfulFactor);
+      rules.forEach(rule => {
+        rule.specialties.forEach(specialty => {
+          allSpecialties.add(specialty);
         });
-      }
-    });
-  }
+      });
+    }
+  });
   
   return Array.from(allSpecialties).sort();
 };
@@ -221,25 +217,22 @@ export const generateClinicRouteSheetPDF = (contract: Contract, doctors: Doctor[
   // Необходимые специалисты на основе вредных факторов
   if (requiredSpecialties.length > 0) {
     doc.setFont('helvetica', 'bold');
-    doc.text('НЕОБХОДИМЫЕ СПЕЦИАЛИСТЫ:', 20, yPosition);
+    doc.text('НЕОБХОДИМЫЕ СПЕЦИАЛИСТЫ (по вредным факторам):', 20, yPosition);
     yPosition += 10;
     
     doc.setFont('helvetica', 'normal');
-    // Разбиваем на 2 колонки если много
-    const midPoint = Math.ceil(requiredSpecialties.length / 2);
-    requiredSpecialties.forEach((specialty, index) => {
-        const xPos = index < midPoint ? 20 : 110;
-        const yPos = yPosition + ((index % midPoint) * 7);
-      doc.text(`• ${specialty}`, xPos, yPos);
+    requiredSpecialties.forEach(specialty => {
+      doc.text(`• ${specialty}`, 20, yPosition);
+      yPosition += 7;
     });
     
-    yPosition += (midPoint * 7) + 10;
+    yPosition += 10;
   }
   
   // Необходимые лабораторные исследования
   if (requiredResearch.length > 0) {
     doc.setFont('helvetica', 'bold');
-    doc.text('НЕОБХОДИМЫЕ ИССЛЕДОВАНИЯ:', 20, yPosition);
+    doc.text('НЕОБХОДИМЫЕ ИССЛЕДОВАНИЯ (по вредным факторам):', 20, yPosition);
     yPosition += 10;
     
     doc.setFont('helvetica', 'normal');
@@ -477,7 +470,7 @@ export const generateCommissionOrderPDF = (contract: Contract, doctors: Doctor[]
       yPosition += 7;
     });
   } else {
-    // Если врачи не переданы, используем список необходимых специализаций
+    // Если врачи не переданы, используем автоматически определенные специализации
     doc.text('Председатель комиссии:', 25, yPosition);
     yPosition += 7;
     doc.text('Врач-профпатолог: _________________________', 30, yPosition);
@@ -486,7 +479,7 @@ export const generateCommissionOrderPDF = (contract: Contract, doctors: Doctor[]
     doc.text('Члены комиссии:', 25, yPosition);
     yPosition += 7;
     
-    // Показываем всех специалистов
+    // Показываем все необходимые специализации кроме профпатолога
     const otherSpecialties = requiredSpecialties.filter(s => s !== 'Профпатолог');
     if (otherSpecialties.length > 0) {
       otherSpecialties.forEach(specialty => {
@@ -494,15 +487,26 @@ export const generateCommissionOrderPDF = (contract: Contract, doctors: Doctor[]
         yPosition += 7;
       });
     } else {
-        // Fallback если список пуст
-        MANDATORY_SPECIALISTS.filter(s => s !== 'Профпатолог').forEach(specialty => {
-            doc.text(`${specialty}: _________________________`, 30, yPosition);
-            yPosition += 7;
-        });
+      doc.text('Терапевт: _________________________', 30, yPosition);
+      yPosition += 7;
     }
   }
   
-  yPosition += 10;
+  // Добавляем информацию о необходимых специалистах
+  if (requiredSpecialties.length > 0) {
+    yPosition += 10;
+    doc.setFont('helvetica', 'bold');
+    doc.text('Необходимые специалисты согласно вредным факторам:', 25, yPosition);
+    yPosition += 7;
+    
+    doc.setFont('helvetica', 'normal');
+    requiredSpecialties.forEach(specialty => {
+      doc.text(`• ${specialty}`, 30, yPosition);
+      yPosition += 6;
+    });
+  }
+  
+  yPosition += 15;
   
   // Пункт 2
   yPosition = addTextWithWrap(doc, `2. Комиссии провести медицинский осмотр работников ${contract.clientName} в период с ${contract.calendarPlan?.startDate} по ${contract.calendarPlan?.endDate}.`, 20, yPosition, 170);
@@ -528,7 +532,7 @@ export const generateCommissionOrderPDF = (contract: Contract, doctors: Doctor[]
 };
 
 // Генерация заключительного акта
-export const generateFinalActPDF = (contract: Contract, employees: Employee[], ambulatoryCards: any[] = []) => {
+export const generateFinalActPDF = (contract: Contract, employees: Employee[]) => {
   const doc = new jsPDF();
   setupPDFFont(doc);
   
@@ -556,19 +560,14 @@ export const generateFinalActPDF = (contract: Contract, employees: Employee[], a
   
   // Статистика
   const total = employees.length;
-  // Считаем статусы из ambulatoryCards, если они есть, иначе из employees
-  // Это важно для более точного учета healthGroup
-  
-  const pending = employees.filter(e => e.status === 'pending').length;
-  const inspected = total - pending;
-  
   const fit = employees.filter(e => e.status === 'fit').length;
   const unfit = employees.filter(e => e.status === 'unfit').length;
   const observation = employees.filter(e => e.status === 'needs_observation').length;
+  const pending = employees.filter(e => e.status === 'pending').length;
   
   doc.text(`4. Всего работников, подлежащих осмотру: ${total}`, 20, yPosition);
   yPosition += 8;
-  doc.text(`5. Всего осмотрено: ${inspected} (% охвата: ${total > 0 ? Math.round((inspected / total) * 100) : 0}%)`, 20, yPosition);
+  doc.text(`5. Всего осмотрено: ${total - pending} (% охвата: ${total > 0 ? Math.round(((total - pending) / total) * 100) : 0}%)`, 20, yPosition);
   yPosition += 10;
   
   doc.text(`   - Признаны годными к работе: ${fit}`, 25, yPosition);
@@ -577,9 +576,47 @@ export const generateFinalActPDF = (contract: Contract, employees: Employee[], a
   yPosition += 7;
   doc.text(`   - Нуждаются в дообследовании: ${observation}`, 25, yPosition);
   yPosition += 7;
-  doc.text(`   - Имеют противопоказания к работе (не годны): ${unfit}`, 25, yPosition);
+  doc.text(`   - Имеют противопоказания к работе: ${unfit}`, 25, yPosition);
   yPosition += 15;
   
+  // Приложение: Поименный список (п. 15)
+  const listForTransfer = employees.filter(e => e.status === 'unfit' || e.status === 'needs_observation');
+  if (listForTransfer.length > 0) {
+    doc.addPage();
+    yPosition = 20;
+    doc.setFont('helvetica', 'bold');
+    doc.text('ПРИЛОЖЕНИЕ К ЗАКЛЮЧИТЕЛЬНОМУ АКТУ', 105, yPosition, { align: 'center' });
+    yPosition += 10;
+    doc.text('Поименный список лиц, нуждающихся в переводе, лечении или наблюдении', 105, yPosition, { align: 'center' });
+    yPosition += 15;
+    
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    
+    // Заголовки таблицы
+    doc.text('№', 20, yPosition);
+    doc.text('Ф.И.О.', 30, yPosition);
+    doc.text('Должность', 80, yPosition);
+    doc.text('Рекомендация', 130, yPosition);
+    yPosition += 5;
+    doc.line(20, yPosition, 190, yPosition);
+    yPosition += 7;
+    
+    listForTransfer.forEach((e, i) => {
+      if (yPosition > 270) {
+        doc.addPage();
+        yPosition = 20;
+      }
+      doc.text((i + 1).toString(), 20, yPosition);
+      doc.text(e.name.substring(0, 25), 30, yPosition);
+      doc.text(e.position.substring(0, 25), 80, yPosition);
+      const rec = e.status === 'unfit' ? 'Перевод / Лечение' : 'Динам. наблюдение';
+      doc.text(rec, 130, yPosition);
+      yPosition += 7;
+    });
+  }
+
+  yPosition += 15;
   // Рекомендации
   doc.text('6. Рекомендации по оздоровлению условий труда:', 20, yPosition);
   yPosition += 10;
@@ -605,218 +642,8 @@ export const generateFinalActPDF = (contract: Contract, employees: Employee[], a
   doc.text(`Дата: ${new Date().toLocaleDateString('ru-RU')}`, 20, yPosition);
   yPosition += 10;
   doc.text('М.П.', 20, yPosition);
-
-  // --- ПРИЛОЖЕНИЕ: ПОИМЕННЫЙ СПИСОК ---
-  doc.addPage();
-  yPosition = 20;
-  
-  doc.setFontSize(14);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Приложение к заключительному акту', 105, yPosition, { align: 'center' });
-  yPosition += 10;
-  doc.text('Поименный список лиц, нуждающихся в оздоровлении', 105, yPosition, { align: 'center' });
-  yPosition += 15;
-  
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'normal');
-  
-  // Header Table
-  const headers = ['№', 'ФИО', 'Должность', 'Заключение/Рекомендация'];
-  let xPos = 20;
-  headers.forEach((h, i) => {
-      const w = i === 1 ? 60 : i === 3 ? 60 : 25;
-      doc.rect(xPos, yPosition, w, 10);
-      doc.text(h, xPos + 2, yPosition + 6);
-      xPos += w;
-  });
-  yPosition += 10;
-  
-  // Rows
-  const list = employees.filter(e => e.status !== 'fit' && e.status !== 'pending');
-  
-  if (list.length === 0) {
-      doc.rect(20, yPosition, 170, 10);
-      doc.text('Нет сотрудников, нуждающихся в оздоровлении', 25, yPosition + 6);
-  } else {
-      list.forEach((emp, i) => {
-          const rec = emp.status === 'unfit' ? 'Перевод на другую работу / Лечение' : 'Диспансерное наблюдение';
-          
-          let rowY = yPosition;
-          const h = 10; // row height
-          
-          // №
-          doc.rect(20, rowY, 25, h);
-          doc.text((i + 1).toString(), 22, rowY + 6);
-          
-          // ФИО
-          doc.rect(45, rowY, 60, h);
-          doc.text(emp.name, 47, rowY + 6);
-          
-          // Должность
-          doc.rect(105, rowY, 25, h);
-          doc.text(emp.position || '', 107, rowY + 6);
-          
-          // Заключение
-          doc.rect(130, rowY, 60, h);
-          doc.text(rec, 132, rowY + 6);
-          
-          yPosition += h;
-          
-          // Page break check (simple)
-          if (yPosition > 270) {
-              doc.addPage();
-              yPosition = 20;
-          }
-      });
-  }
   
   return doc;
-};
-
-// Генерация Сводного отчета (Приложение 2)
-export const generateSummaryReportPDF = (contract: Contract, employees: Employee[], ambulatoryCards: any[] = []) => {
-  const doc = new jsPDF();
-  setupPDFFont(doc);
-  
-  let yPosition = 20;
-  
-  // Заголовок
-  doc.setFontSize(16);
-  doc.setFont('helvetica', 'bold');
-  doc.text('СВОДНЫЙ ОТЧЕТ', 105, yPosition, { align: 'center' });
-  yPosition += 10;
-  doc.setFontSize(12);
-  doc.text('о результатах проведенного периодического медицинского осмотра', 105, yPosition, { align: 'center' });
-  yPosition += 10;
-  doc.setFontSize(10);
-  doc.text('(Приложение 2 к Правилам проведения обязательных медицинских осмотров)', 105, yPosition, { align: 'center' });
-  yPosition += 15;
-  
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(11);
-  
-  // Данные для отчета
-  const total = employees.length;
-  const inspected = employees.filter(e => e.status !== 'pending').length;
-  
-  // Подсчет по группам здоровья
-  const healthGroups: Record<string, number> = {
-      '1': 0, '2': 0, '3': 0, '4': 0, '5': 0, '6': 0
-  };
-  
-  // Для простоты, если нет детальных карт, мапим статусы
-  if (ambulatoryCards.length > 0) {
-      ambulatoryCards.forEach((card: any) => {
-          const g = card.finalConclusion?.healthGroup;
-          if (g && healthGroups[g] !== undefined) {
-              healthGroups[g]++;
-          }
-      });
-  } else {
-      // Fallback mapping from status
-      employees.forEach(e => {
-          if (e.status === 'fit') healthGroups['1']++; // Assumed
-          else if (e.status === 'needs_observation') healthGroups['3']++; // Assumed
-          else if (e.status === 'unfit') healthGroups['4']++; // Assumed
-      });
-  }
-  
-  // I. Общие сведения
-  doc.setFont('helvetica', 'bold');
-  doc.text('I. Общие сведения', 20, yPosition);
-  yPosition += 10;
-  doc.setFont('helvetica', 'normal');
-  doc.text(`1. Наименование медицинской организации: ${contract.clinicName}`, 20, yPosition);
-  yPosition += 8;
-  doc.text(`2. Наименование организации (предприятия): ${contract.clientName}`, 20, yPosition);
-  yPosition += 8;
-  doc.text(`3. Количество цехов (участков): -`, 20, yPosition);
-  yPosition += 8;
-  doc.text(`4. Количество работников, занятых во вредных условиях труда: ${employees.filter(e => !!e.harmfulFactor).length}`, 20, yPosition);
-  yPosition += 15;
-  
-  // II-IX Sections (simplified table-like layout)
-  const items = [
-      `II. Подлежит осмотру всего: ${total}`,
-      `III. Осмотрено всего: ${inspected} (% выполнения: ${total > 0 ? Math.round(inspected/total*100) : 0}%)`,
-      `IV. Выявлено лиц с общими соматическими заболеваниями: ${healthGroups['3'] + healthGroups['4']}`,
-      `   из них впервые: -`,
-      `V. Выявлено лиц с профессиональными заболеваниями: ${healthGroups['6']}`,
-      `   из них женщин: -`,
-      `VI. Выявлено лиц с подозрением на профзаболевание: ${healthGroups['5']}`,
-      `VII. Распределение осмотренных по группам здоровья (п. 21):`,
-      `   1) Здоровые: ${healthGroups['1']}`,
-      `   2) Практически здоровые: ${healthGroups['2']}`,
-      `   3) Начальные формы общих заболеваний: ${healthGroups['3']}`,
-      `   4) Выраженные формы общих заболеваний: ${healthGroups['4']}`,
-      `   5) Признаки воздействия вредных факторов: ${healthGroups['5']}`,
-      `   6) Признаки профзаболеваний: ${healthGroups['6']}`,
-      `VIII. Результаты осмотра женщин:`,
-      `   Осмотрено гинекологом: -`,
-      `   Выявлено заболеваний: -`,
-      `IX. Результаты выполнения плана оздоровления за прошлый год:`,
-      `   Процент выполнения: -`
-  ];
-  
-  items.forEach(item => {
-      doc.text(item, 20, yPosition);
-      yPosition += 8;
-      
-      if (yPosition > 270) {
-          doc.addPage();
-          yPosition = 20;
-      }
-  });
-  
-  yPosition += 15;
-  doc.text('Руководитель медицинской организации: _________________________', 20, yPosition);
-  yPosition += 10;
-  doc.text(`Дата: ${new Date().toLocaleDateString('ru-RU')}`, 20, yPosition);
-  
-  return doc;
-};
-
-// Экстренное извещение (Item 19)
-export const generateEmergencyNotificationPDF = (employee: Employee, diagnosis: string) => {
-    const doc = new jsPDF();
-    setupPDFFont(doc);
-    let y = 20;
-    
-    doc.setFontSize(16);
-    doc.setFont('helvetica', 'bold');
-    doc.text('ЭКСТРЕННОЕ ИЗВЕЩЕНИЕ', 105, y, { align: 'center' });
-    y += 10;
-    doc.setFontSize(12);
-    doc.text('об инфекционном заболевании, пищевом, остром профессиональном отравлении', 105, y, { align: 'center' });
-    y += 20;
-    
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(12);
-    
-    const fields = [
-        `1. Диагноз: ${diagnosis}`,
-        `2. Фамилия, имя, отчество: ${employee.name}`,
-        `3. Дата рождения: ${employee.dob}`,
-        `4. Адрес проживания: (из амбулаторной карты)`,
-        `5. Место работы, должность: ${employee.position}`,
-        `6. Даты заболевания: ${new Date().toLocaleDateString('ru-RU')}`,
-        `7. Дата первичного обращения: ${new Date().toLocaleDateString('ru-RU')}`,
-        `8. Дата установления диагноза: ${new Date().toLocaleDateString('ru-RU')}`,
-        `9. Дата госпитализации: -`,
-        `10. Место госпитализации: -`,
-        `11. Проведенные первичные противоэпидемические мероприятия: -`
-    ];
-    
-    fields.forEach(f => {
-        y = addTextWithWrap(doc, f, 20, y, 170);
-        y += 10;
-    });
-    
-    y += 20;
-    doc.text('Врач, пославший извещение: ____________________', 20, y);
-    doc.text(`Дата: ${new Date().toLocaleDateString('ru-RU')}`, 140, y);
-    
-    return doc;
 };
 
 // Генерация плана оздоровления

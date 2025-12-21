@@ -114,11 +114,24 @@ export const createRouteSheetsForAllDoctors = async (
     
     let relevantEmployees: Employee[];
     
-    // Профпатолог (председатель комиссии) должен осматривать всех сотрудников
-    if (doctor.specialty === 'Профпатолог') {
+    // Обязательные специалисты осматривают всех сотрудников (п. 14 приказа)
+    const mandatorySpecialties = [
+      'Профпатолог',
+      'Терапевт',
+      'Хирург',
+      'Невропатолог',
+      'Оториноларинголог',
+      'Офтальмолог',
+      'Дерматовенеролог',
+      'Гинеколог',
+      'Рентгенолог',
+      'Врач по функциональной диагностике',
+      'Врач-лаборант'
+    ];
+
+    if (mandatorySpecialties.includes(doctor.specialty)) {
       relevantEmployees = employees;
-      console.log(`Профпатолог ${doctor.name}: осматривает всех сотрудников (${relevantEmployees.length})`);
-      console.log('Список всех сотрудников:', employees.map(e => `${e.name} (${e.position})`));
+      console.log(`Обязательный специалист ${doctor.name} (${doctor.specialty}): осматривает всех сотрудников (${relevantEmployees.length})`);
     } else {
       // Для других врачей - только тех, у кого есть соответствующие вредные факторы
       console.log(`Анализ сотрудников для врача ${doctor.specialty}:`);
@@ -202,11 +215,25 @@ export const createRouteSheetsForAllSpecialties = async (
     doctorsCount: doctors.length
   });
 
-  // Собираем все необходимые специализации из вредных факторов сотрудников
+  // Собираем все необходимые специализации
   const requiredSpecialties = new Set<string>();
   
-  // Профпатолог всегда нужен
-  requiredSpecialties.add('Профпатолог');
+  // Обязательные специалисты (п. 14 приказа)
+  const mandatorySpecialties = [
+    'Профпатолог',
+    'Терапевт',
+    'Хирург',
+    'Невропатолог',
+    'Оториноларинголог',
+    'Офтальмолог',
+    'Дерматовенеролог',
+    'Гинеколог',
+    'Рентгенолог',
+    'Врач по функциональной диагностике',
+    'Врач-лаборант'
+  ];
+
+  mandatorySpecialties.forEach(s => requiredSpecialties.add(s));
   
   employees.forEach(employee => {
     if (employee.harmfulFactor) {
@@ -230,10 +257,24 @@ export const createRouteSheetsForAllSpecialties = async (
     
     let relevantEmployees: Employee[];
     
-    // Профпатолог осматривает всех
-    if (specialty === 'Профпатолог') {
+    const mandatorySpecialties = [
+      'Профпатолог',
+      'Терапевт',
+      'Хирург',
+      'Невропатолог',
+      'Оториноларинголог',
+      'Офтальмолог',
+      'Дерматовенеролог',
+      'Гинеколог',
+      'Рентгенолог',
+      'Врач по функциональной диагностике',
+      'Врач-лаборант'
+    ];
+
+    // Обязательные специалисты осматривают всех
+    if (mandatorySpecialties.includes(specialty)) {
       relevantEmployees = employees;
-      console.log(`Профпатолог: осматривает всех сотрудников (${relevantEmployees.length})`);
+      console.log(`${specialty}: осматривает всех сотрудников (${relevantEmployees.length})`);
     } else {
       // Для других специализаций - только тех, у кого есть соответствующие вредные факторы
       relevantEmployees = employees.filter(emp => {
@@ -396,8 +437,22 @@ export const updateRouteSheetsForNewDoctor = async (
 export const getRequiredSpecialtiesForContract = (employees: Employee[]): string[] => {
   const requiredSpecialties = new Set<string>();
   
-  // Профпатолог всегда нужен
-  requiredSpecialties.add('Профпатолог');
+  // Обязательные специалисты (п. 14 приказа)
+  const mandatorySpecialties = [
+    'Профпатолог',
+    'Терапевт',
+    'Хирург',
+    'Невропатолог',
+    'Оториноларинголог',
+    'Офтальмолог',
+    'Дерматовенеролог',
+    'Гинеколог',
+    'Рентгенолог',
+    'Врач по функциональной диагностике',
+    'Врач-лаборант'
+  ];
+
+  mandatorySpecialties.forEach(s => requiredSpecialties.add(s));
   
   employees.forEach(employee => {
     if (employee.harmfulFactor) {

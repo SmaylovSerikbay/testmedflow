@@ -525,6 +525,7 @@ const ContractWorkspace: React.FC<ContractWorkspaceProps> = ({
             onToggleStatus={handleToggleEmployeeStatus}
             updateContract={updateContract}
             contractId={contract.id}
+            contract={contract}
             showToast={showToast}
           />
         </div>

@@ -13,6 +13,16 @@ interface FinalConclusionModalProps {
   onSaved: () => void;
 }
 
+const HEALTH_GROUPS = [
+  { value: 'fit', label: 'Группа 1: Здоровые', id: 1 },
+  { value: 'practically_fit', label: 'Группа 2: Практически здоровые', id: 2 },
+  { value: 'early_illness', label: 'Группа 3: Начальные формы общих заболеваний', id: 3 },
+  { value: 'expressed_illness', label: 'Группа 4: Выраженные формы общих заболеваний', id: 4 },
+  { value: 'factor_effect', label: 'Группа 5: Признаки воздействия вредных факторов', id: 5 },
+  { value: 'prof_disease', label: 'Группа 6: Признаки профессиональных заболеваний', id: 6 },
+  { value: 'unfit', label: 'Не годен к работе', id: 0 },
+];
+
 const FinalConclusionModal: React.FC<FinalConclusionModalProps> = ({
   employee,
   card,
@@ -24,13 +34,13 @@ const FinalConclusionModal: React.FC<FinalConclusionModalProps> = ({
 }) => {
   const [isSaving, setIsSaving] = useState(false);
   const [form, setForm] = useState({
-    status: card.finalConclusion?.status || 'fit' as 'fit' | 'unfit' | 'needs_observation',
-    healthGroup: card.finalConclusion?.healthGroup || '',
+    status: (card.finalConclusion?.status || 'fit') as any,
     diagnosis: card.finalConclusion?.diagnosis || '',
     recommendations: card.finalConclusion?.recommendations || '',
     restrictions: card.finalConclusion?.restrictions || '',
     nextExamDate: card.finalConclusion?.nextExamDate || '',
     notes: card.finalConclusion?.notes || '',
+    healthGroup: card.finalConclusion?.healthGroup || 1,
   });
 
   // Проверяем, все ли врачи завершили осмотры
@@ -46,11 +56,12 @@ const FinalConclusionModal: React.FC<FinalConclusionModalProps> = ({
 
     setIsSaving(true);
     try {
+      const selectedGroup = HEALTH_GROUPS.find(g => g.value === form.status);
+      
       const updatedCard: AmbulatoryCard = {
         ...card,
         finalConclusion: {
           status: form.status,
-          healthGroup: form.healthGroup as any,
           date: new Date().toISOString(),
           doctorId,
           doctorName,
@@ -59,9 +70,11 @@ const FinalConclusionModal: React.FC<FinalConclusionModalProps> = ({
           restrictions: form.restrictions,
           nextExamDate: form.nextExamDate,
           notes: form.notes,
+          healthGroup: selectedGroup?.id as any || 1,
         },
         updatedAt: new Date().toISOString(),
       };
+// ... rest of the function remains same
 
       const contractIdNum = parseInt(contract.id, 10);
       if (!isNaN(contractIdNum)) {
@@ -146,7 +159,7 @@ const FinalConclusionModal: React.FC<FinalConclusionModalProps> = ({
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">
-                Статус пригодности <span className="text-red-500">*</span>
+                Группа здоровья / Заключение <span className="text-red-500">*</span>
               </label>
               <select
                 value={form.status}
@@ -154,29 +167,9 @@ const FinalConclusionModal: React.FC<FinalConclusionModalProps> = ({
                 className="w-full px-4 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
                 disabled={!allExamsCompleted}
               >
-                <option value="fit">Годен к работе</option>
-                <option value="unfit">Не годен к работе (Противопоказания)</option>
-                <option value="needs_observation">Требуется дообследование/наблюдение</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Группа здоровья (согласно п. 21 Приказа) <span className="text-red-500">*</span>
-              </label>
-              <select
-                value={form.healthGroup}
-                onChange={(e) => setForm({ ...form, healthGroup: e.target.value })}
-                className="w-full px-4 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-                disabled={!allExamsCompleted}
-              >
-                <option value="">Выберите группу...</option>
-                <option value="1">1. Здоровые работники (не нуждаются в реабилитации)</option>
-                <option value="2">2. Практически здоровые (нестойкие функциональные изменения)</option>
-                <option value="3">3. Имеющие начальные формы общих заболеваний</option>
-                <option value="4">4. Имеющие выраженные формы общих заболеваний</option>
-                <option value="5">5. Имеющие признаки воздействия вредных факторов</option>
-                <option value="6">6. Имеющие признаки профессиональных заболеваний</option>
+                {HEALTH_GROUPS.map(group => (
+                  <option key={group.value} value={group.value}>{group.label}</option>
+                ))}
               </select>
             </div>
 

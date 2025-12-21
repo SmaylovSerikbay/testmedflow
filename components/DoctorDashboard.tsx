@@ -4,7 +4,14 @@ import { FACTOR_RULES, FactorRule } from '../factorRules';
 import { LoaderIcon, UserMdIcon, FileTextIcon, CheckShieldIcon, LogoutIcon, AlertCircleIcon, SearchIcon, FilterIcon, CalendarIcon, ClockIcon } from './Icons';
 import FinalConclusionModal from './FinalConclusionModal';
 import Form052Editor from './Form052Editor';
-import { Form052Data } from '../types/form052';
+import { 
+  generateClinicRouteSheetPDF, 
+  generateOrganizationRouteSheetPDF, 
+  generateCommissionOrderPDF,
+  generateFinalActPDF,
+  generateHealthPlanPDF,
+  generateEmergencyNotificationPDF
+} from '../utils/pdfGenerator';
 import {
   apiListContractsByBin,
   apiListRouteSheets,
@@ -755,6 +762,16 @@ const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ currentUser }) => {
     }
   }, [selectedEmployee, contract, currentUser, examinationForm, routeSheet, loadAmbulatoryCards, employees]);
 
+  const handleGenerateEmergencyNotice = useCallback(() => {
+    if (!contract || !selectedEmployee || !examinationForm.diagnosis) {
+      alert('Выберите сотрудника и укажите диагноз');
+      return;
+    }
+    
+    const doc = generateEmergencyNotificationPDF(contract, selectedEmployee, examinationForm.diagnosis);
+    doc.save(`Экстренное_извещение_${selectedEmployee.name}.pdf`);
+  }, [contract, selectedEmployee, examinationForm.diagnosis]);
+
   // Фильтрация и поиск пациентов
   const filteredEmployees = useMemo(() => {
     if (!routeSheet) return [];
@@ -1392,6 +1409,16 @@ const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ currentUser }) => {
                       </>
                     )}
                   </button>
+
+                  {examinationForm.diagnosis && (
+                    <button
+                      onClick={handleGenerateEmergencyNotice}
+                      className="w-full py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl font-bold hover:bg-amber-100 transition-colors flex items-center justify-center gap-2"
+                    >
+                      <AlertCircleIcon className="w-4 h-4" />
+                      Экстренное извещение (п. 19)
+                    </button>
+                  )}
 
                   <button
                     onClick={() => {
