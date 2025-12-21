@@ -5,28 +5,12 @@ echo "=== Обновление проекта из Git ==="
 git pull origin main
 
 echo ""
-echo "=== Пересборка backend контейнера ==="
-docker compose build backend --no-cache
+echo "=== Перезапуск backend ==="
+docker compose down
 
 echo ""
 echo "=== Перезапуск backend ==="
-docker compose stop backend
-docker compose rm -f backend
-docker compose up -d backend
-
-echo ""
-echo "=== Ожидание запуска backend (5 секунд) ==="
-sleep 5
-
-echo ""
-echo "=== Пересборка frontend контейнера ==="
-docker compose build frontend --no-cache
-
-echo ""
-echo "=== Перезапуск frontend ==="
-docker compose stop frontend
-docker compose rm -f frontend
-docker compose up -d frontend
+docker compose up -d --build
 
 echo ""
 echo "=== Ожидание запуска (10 секунд) ==="

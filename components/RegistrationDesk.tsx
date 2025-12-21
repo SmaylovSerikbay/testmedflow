@@ -231,7 +231,24 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
 
     try {
       const clinicId = currentUser.clinicId || currentUser.uid;
+      if (!clinicId) {
+        alert('Ошибка: не указан ID клиники');
+        setIsRegistering(false);
+        return;
+      }
+
       const contractIdNum = parseInt(selectedContract.id, 10);
+      if (isNaN(contractIdNum)) {
+        alert('Ошибка: неверный ID договора');
+        setIsRegistering(false);
+        return;
+      }
+
+      if (!employee.id) {
+        alert('Ошибка: не указан ID сотрудника');
+        setIsRegistering(false);
+        return;
+      }
       
       // Создаем посещение через API
       const visit = await apiCreateEmployeeVisit({
@@ -407,6 +424,17 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
 
     try {
       const clinicId = currentUser.clinicId || currentUser.uid;
+      if (!clinicId) {
+        alert('Ошибка: не указан ID клиники');
+        setIsRegistering(false);
+        return;
+      }
+
+      if (!patient.id) {
+        alert('Ошибка: не указан ID пациента');
+        setIsRegistering(false);
+        return;
+      }
       
       // Создаем посещение для индивидуального пациента
       const visit = await apiCreateEmployeeVisit({

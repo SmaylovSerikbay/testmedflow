@@ -1679,9 +1679,32 @@ func createEmployeeVisitHandler(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	// Проверяем существование контракта, если он указан
+	if in.ContractID != nil {
+		var contractExists bool
+		err := db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM contracts WHERE id = $1)`, *in.ContractID).Scan(&contractExists)
+		if err != nil {
+			log.Printf("createEmployeeVisit: error checking contract existence: %v", err)
+			errorResponse(w, http.StatusInternalServerError, fmt.Sprintf("failed to validate contract: %v", err))
+			return
+		}
+		if !contractExists {
+			log.Printf("createEmployeeVisit: contract with id %d does not exist", *in.ContractID)
+			errorResponse(w, http.StatusBadRequest, fmt.Sprintf("contract with id %d does not exist", *in.ContractID))
+			return
+		}
+	}
+
 	visitDate := in.VisitDate
 	if visitDate == "" {
 		visitDate = time.Now().Format("2006-01-02")
+	}
+
+	// Валидация формата даты
+	if _, err := time.Parse("2006-01-02", visitDate); err != nil {
+		log.Printf("createEmployeeVisit: invalid date format: %s", visitDate)
+		errorResponse(w, http.StatusBadRequest, fmt.Sprintf("invalid date format: %s (expected YYYY-MM-DD)", visitDate))
+		return
 	}
 
 	checkInTime := time.Now().Format(time.RFC3339)
@@ -1693,8 +1716,9 @@ VALUES ($1, $2, $3, $4, $5, 'registered', $6, $7, '[]'::jsonb)
 RETURNING id
 `, in.EmployeeID, in.ContractID, in.ClinicID, visitDate, checkInTime, in.RegisteredBy, in.Notes).Scan(&id)
 	if err != nil {
-		log.Printf("createEmployeeVisit error: %v", err)
-		errorResponse(w, http.StatusInternalServerError, "db error")
+		log.Printf("createEmployeeVisit error: %v (employeeId=%s, contractId=%v, clinicId=%s, visitDate=%s)",
+			err, in.EmployeeID, in.ContractID, in.ClinicID, visitDate)
+		errorResponse(w, http.StatusInternalServerError, fmt.Sprintf("db error: %v", err))
 		return
 	}
 
