@@ -31,7 +31,8 @@ export interface Employee {
   lastMedDate?: string;            // Дата последнего медосмотра
   note?: string;                   // Примечание (может содержать телефон для регистрации)
   harmfulFactor: string;
-  status: 'pending' | 'fit' | 'unfit' | 'needs_observation';
+  status: 'pending' | 'fit' | 'unfit' | 'needs_observation' | 'fit_with_restrictions';
+  healthGroup?: 'I' | 'II' | 'III' | 'IV' | 'V'; // Группа здоровья
   phone?: string;                  // Телефон сотрудника (извлекается из note)
   userId?: string;                  // UID пользователя, если зарегистрирован
 }
@@ -142,9 +143,10 @@ export interface AmbulatoryCard {
   
   // Общее заключение комиссии
   finalConclusion?: {
-    status: 'fit' | 'unfit' | 'needs_observation';
+    status: 'fit' | 'unfit' | 'needs_observation' | 'fit_with_restrictions';
+    healthGroup: 'I' | 'II' | 'III' | 'IV' | 'V'; // Группа здоровья (п.21 Приказа)
     date: string;
-    doctorId: string; // ID председателя комиссии
+    doctorId: string; // ID председателя комиссии (профпатолог)
     doctorName?: string;
     diagnosis?: string; // Диагноз
     recommendations?: string; // Рекомендации
