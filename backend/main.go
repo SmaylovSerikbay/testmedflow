@@ -1477,7 +1477,7 @@ RETURNING id
 		err = db.QueryRow(ctx, `
 INSERT INTO ambulatory_cards (employee_id, contract_id, card_number, personal_info, anamnesis, vitals, lab_tests, examinations, final_conclusion)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-ON CONFLICT ON CONSTRAINT ambulatory_cards_employee_contract_unique DO UPDATE SET
+ON CONFLICT (employee_id, contract_id) WHERE contract_id IS NOT NULL DO UPDATE SET
   card_number = EXCLUDED.card_number,
   personal_info = EXCLUDED.personal_info,
   anamnesis = EXCLUDED.anamnesis,
