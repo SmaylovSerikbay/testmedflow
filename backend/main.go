@@ -1208,15 +1208,9 @@ func getAmbulatoryCardHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("getAmbulatoryCardHandler called: employeeId=%s, contractId=%s", employeeID, contractIDStr)
 
-	if employeeID == "" || contractIDStr == "" {
-		log.Printf("getAmbulatoryCardHandler: missing required params")
-		errorResponse(w, http.StatusBadRequest, "employeeId and contractId are required")
-		return
-	}
-
-	var contractID int64
-	if _, err := fmt.Sscanf(contractIDStr, "%d", &contractID); err != nil {
-		errorResponse(w, http.StatusBadRequest, "invalid contractId")
+	if employeeID == "" {
+		log.Printf("getAmbulatoryCardHandler: missing employeeId")
+		errorResponse(w, http.StatusBadRequest, "employeeId is required")
 		return
 	}
 
@@ -1239,8 +1233,8 @@ ORDER BY updated_at DESC
 LIMIT 1
 `, employeeID)
 	} else {
-		var contractID int64
-		if _, err := fmt.Sscanf(contractIDStr, "%d", &contractID); err != nil {
+		var contractIDVal int64
+		if _, err := fmt.Sscanf(contractIDStr, "%d", &contractIDVal); err != nil {
 			errorResponse(w, http.StatusBadRequest, "invalid contractId")
 			return
 		}
@@ -1250,7 +1244,7 @@ FROM ambulatory_cards
 WHERE employee_id = $1 AND contract_id = $2
 ORDER BY updated_at DESC
 LIMIT 1
-`, employeeID, contractID)
+`, employeeID, contractIDVal)
 	}
 
 	var ac AmbulatoryCard
@@ -1311,11 +1305,11 @@ LIMIT 1
 		}
 	}
 
-	contractIDStr := "null"
+	contractIDStrLog := "null"
 	if ac.ContractID != nil {
-		contractIDStr = fmt.Sprintf("%d", *ac.ContractID)
+		contractIDStrLog = fmt.Sprintf("%d", *ac.ContractID)
 	}
-	log.Printf("getAmbulatoryCard: returning card id=%d, employeeId=%s, contractId=%s, hasExaminations=%v, hasAnamnesis=%v, hasVitals=%v", ac.ID, ac.EmployeeID, contractIDStr, len(ac.Examinations) > 0, ac.Anamnesis != nil && len(ac.Anamnesis) > 0, ac.Vitals != nil && len(ac.Vitals) > 0)
+	log.Printf("getAmbulatoryCard: returning card id=%d, employeeId=%s, contractId=%s, hasExaminations=%v, hasAnamnesis=%v, hasVitals=%v", ac.ID, ac.EmployeeID, contractIDStrLog, len(ac.Examinations) > 0, ac.Anamnesis != nil && len(ac.Anamnesis) > 0, ac.Vitals != nil && len(ac.Vitals) > 0)
 	jsonResponse(w, http.StatusOK, map[string]any{"card": ac})
 }
 
