@@ -387,22 +387,31 @@ CREATE TABLE IF NOT EXISTS employee_visits (
 	}
 
 	// Обновляем ambulatory_cards чтобы contract_id мог быть NULL для индивидуальных пациентов
+	// Используем SAVEPOINT для изоляции ошибок
+	_, _ = tx.Exec(ctx, `SAVEPOINT before_alter_ambulatory;`)
 	_, err = tx.Exec(ctx, `ALTER TABLE ambulatory_cards ALTER COLUMN contract_id DROP NOT NULL;`)
 	if err != nil {
-		// Игнорируем ошибку если колонка уже nullable
+		// Откатываемся к savepoint и продолжаем
+		_, _ = tx.Exec(ctx, `ROLLBACK TO SAVEPOINT before_alter_ambulatory;`)
 	}
+	_, _ = tx.Exec(ctx, `RELEASE SAVEPOINT before_alter_ambulatory;`)
 
 	// Убираем уникальное ограничение для индивидуальных пациентов
-	_, err = tx.Exec(ctx, `DROP INDEX IF EXISTS ambulatory_cards_employee_id_contract_id_key;`)
-	if err != nil {
-		// Игнорируем ошибку
-	}
+	_, _ = tx.Exec(ctx, `SAVEPOINT before_drop_index;`)
+	_, _ = tx.Exec(ctx, `DROP INDEX IF EXISTS ambulatory_cards_employee_id_contract_id_key;`)
+	_, _ = tx.Exec(ctx, `DROP INDEX IF EXISTS ambulatory_cards_employee_contract_unique;`)
+	_, _ = tx.Exec(ctx, `RELEASE SAVEPOINT before_drop_index;`)
 
+	// Создаем уникальный индекс только для записей с contract_id (не для индивидуальных пациентов)
+	_, _ = tx.Exec(ctx, `SAVEPOINT before_create_unique_index;`)
 	_, err = tx.Exec(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS ambulatory_cards_employee_contract_unique 
 		ON ambulatory_cards(employee_id, contract_id) WHERE contract_id IS NOT NULL;`)
 	if err != nil {
-		return nil, fmt.Errorf("create unique index ambulatory_cards: %w", err)
+		// Если индекс не может быть создан, откатываемся и продолжаем без него
+		_, _ = tx.Exec(ctx, `ROLLBACK TO SAVEPOINT before_create_unique_index;`)
+		log.Printf("Warning: could not create unique index ambulatory_cards (may have duplicates): %v", err)
 	}
+	_, _ = tx.Exec(ctx, `RELEASE SAVEPOINT before_create_unique_index;`)
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit migrations: %w", err)
