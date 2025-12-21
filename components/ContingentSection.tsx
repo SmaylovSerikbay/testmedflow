@@ -9,7 +9,7 @@ import EmployeeTableRow from './EmployeeTableRow';
 import ConfirmDialog from './ConfirmDialog';
 import { processEmployeesForAutoRegistration, extractPhoneFromNote } from '../utils/employeeRegistration';
 import { generateContingentPDF } from '../utils/pdfGenerator';
-import { apiGetContractById } from '../services/api';
+import { apiGetContract } from '../services/api';
 
 interface ContingentSectionProps {
   employees: Employee[];
@@ -683,7 +683,7 @@ const ContingentSection: React.FC<ContingentSectionProps> = ({
 
   const handleDownloadContingentPDF = useCallback(async () => {
     try {
-      const contract = await apiGetContractById(parseInt(contractId, 10));
+      const contract = await apiGetContract(parseInt(contractId, 10));
       if (!contract) return;
       
       const doc = generateContingentPDF(contract as any, employees);

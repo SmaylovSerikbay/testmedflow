@@ -190,9 +190,6 @@ export async function apiGetContract(id: number): Promise<ApiContract> {
   return request<ApiContract>(`/api/contracts/${id}`);
 }
 
-// Alias for compatibility
-export const apiGetContractById = apiGetContract;
-
 export async function apiUpdateContract(id: number, patch: Partial<ApiContract> & Record<string, any>): Promise<void> {
   await request(`/api/contracts/${id}`, {
     method: 'PATCH',

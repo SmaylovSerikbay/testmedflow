@@ -720,7 +720,7 @@ export const generateHealthPlanPDF = (contract: Contract, employees: Employee[])
 };
 
 // Генерация списка контингента (Приложение 3)
-export const generateContingentPDF = (contract: Contract, employees: Employee[]) => {
+export function generateContingentPDF(contract: Contract, employees: Employee[]) {
   const doc = new jsPDF('l', 'mm', 'a4'); // Альбомная ориентация
   setupPDFFont(doc);
   
@@ -804,7 +804,7 @@ export const generateContingentPDF = (contract: Contract, employees: Employee[])
 };
 
 // Генерация сводного отчета (Приложение 2)
-export const generateSummaryReportPDF = (contract: Contract, employees: Employee[]) => {
+export function generateSummaryReportPDF(contract: Contract, employees: Employee[]) {
   const doc = new jsPDF();
   setupPDFFont(doc);
   
@@ -821,19 +821,17 @@ export const generateSummaryReportPDF = (contract: Contract, employees: Employee
   
   doc.setFont('helvetica', 'normal');
   const total = employees.length;
-  const fit = employees.filter(e => e.status === 'fit').length;
+  const group1 = employees.filter(e => e.status === 'fit').length;
+  const group2 = employees.filter(e => e.status === 'practically_fit').length;
+  const group3 = employees.filter(e => e.status === 'early_illness').length;
+  const group4 = employees.filter(e => e.status === 'expressed_illness').length;
+  const group5 = employees.filter(e => e.status === 'factor_effect').length;
+  const group6 = employees.filter(e => e.status === 'prof_disease').length;
   const unfit = employees.filter(e => e.status === 'unfit').length;
-  const observation = employees.filter(e => e.status === 'needs_observation').length;
   
   doc.text(`1. Всего подлежало осмотру: ${total} чел.`, 20, yPosition);
   yPosition += 8;
   doc.text(`2. Всего осмотрено: ${total} чел.`, 20, yPosition);
-  yPosition += 8;
-  doc.text(`3. Признаны годными: ${fit} чел.`, 20, yPosition);
-  yPosition += 8;
-  doc.text(`4. Нуждаются в наблюдении: ${observation} чел.`, 20, yPosition);
-  yPosition += 8;
-  doc.text(`5. Имеют противопоказания: ${unfit} чел.`, 20, yPosition);
   yPosition += 15;
   
   doc.setFont('helvetica', 'bold');
@@ -841,13 +839,19 @@ export const generateSummaryReportPDF = (contract: Contract, employees: Employee
   yPosition += 10;
   
   doc.setFont('helvetica', 'normal');
-  doc.text(`- Группа 1 (Здоровые): ${fit} чел.`, 30, yPosition);
+  doc.text(`- Группа 1 (Здоровые): ${group1} чел.`, 30, yPosition);
   yPosition += 7;
-  doc.text(`- Группа 2 (Практически здоровые): 0 чел.`, 30, yPosition);
+  doc.text(`- Группа 2 (Практически здоровые): ${group2} чел.`, 30, yPosition);
   yPosition += 7;
-  doc.text(`- Группа 3 (Начальные формы заболеваний): ${observation} чел.`, 30, yPosition);
+  doc.text(`- Группа 3 (Начальные формы общих заболеваний): ${group3} чел.`, 30, yPosition);
   yPosition += 7;
-  doc.text(`- Группа 4 (Выраженные формы): ${unfit} чел.`, 30, yPosition);
+  doc.text(`- Группа 4 (Выраженные формы общих заболеваний): ${group4} чел.`, 30, yPosition);
+  yPosition += 7;
+  doc.text(`- Группа 5 (Признаки воздействия вредных факторов): ${group5} чел.`, 30, yPosition);
+  yPosition += 7;
+  doc.text(`- Группа 6 (Признаки профессиональных заболеваний): ${group6} чел.`, 30, yPosition);
+  yPosition += 7;
+  doc.text(`- Не годен к работе: ${unfit} чел.`, 30, yPosition);
   yPosition += 15;
   
   doc.text('Председатель комиссии: _________________________', 20, yPosition);
@@ -858,7 +862,7 @@ export const generateSummaryReportPDF = (contract: Contract, employees: Employee
 };
 
 // Генерация экстренного извещения
-export const generateEmergencyNotificationPDF = (contract: Contract, employee: Employee) => {
+export const generateEmergencyNotificationPDF = (contract: Contract, employee: Employee, diagnosis: string) => {
   const doc = new jsPDF();
   setupPDFFont(doc);
   
@@ -883,7 +887,7 @@ export const generateEmergencyNotificationPDF = (contract: Contract, employee: E
   doc.text(`4. Вредный фактор: ${employee.harmfulFactor}`, 20, yPosition);
   yPosition += 15;
   
-  doc.text('Предварительный диагноз: _________________________________', 20, yPosition);
+  doc.text(`Предварительный диагноз: ${diagnosis}`, 20, yPosition);
   yPosition += 10;
   doc.text('Дата обнаружения: ' + new Date().toLocaleDateString('ru-RU'), 20, yPosition);
   yPosition += 15;
