@@ -1957,6 +1957,7 @@ func main() {
 
 	// Employee Visits
 	mux.HandleFunc("/api/employee-visits", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Employee visits handler: method=%s, path=%s", r.Method, r.URL.Path)
 		switch r.Method {
 		case http.MethodGet:
 			listEmployeeVisitsHandler(w, r)
@@ -1967,6 +1968,7 @@ func main() {
 		}
 	})
 	mux.HandleFunc("/api/employee-visits/", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Employee visits ID handler: method=%s, path=%s", r.Method, r.URL.Path)
 		if r.Method == http.MethodPatch {
 			updateEmployeeVisitHandler(w, r)
 			return
