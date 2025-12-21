@@ -47,6 +47,21 @@ type User struct {
 	ContractID *string `json:"contractId,omitempty"`
 }
 
+type AmbulatoryCard struct {
+	ID         int64           `json:"id"`
+	PatientUID string          `json:"patientUid"`
+	IIN        string          `json:"iin"`
+	General    json.RawMessage `json:"general"`
+	Medical    json.RawMessage `json:"medical"`
+	Spec       json.RawMessage `json:"specialistEntries,omitempty"`
+	Labs       json.RawMessage `json:"labResults,omitempty"`
+	Final      json.RawMessage `json:"finalConclusion,omitempty"`
+	Comm       json.RawMessage `json:"communication,omitempty"`
+	Instr      *string         `json:"patientInstruction,omitempty"`
+	CreatedAt  string          `json:"createdAt"`
+	UpdatedAt  string          `json:"updatedAt"`
+}
+
 type CalendarPlan struct {
 	StartDate string  `json:"startDate"`
 	EndDate   string  `json:"endDate"`
@@ -398,9 +413,8 @@ func broadcastToUsers(userIDs []string, messageType string, data interface{}) {
 func jsonResponse(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	if v != nil {
-		_ = json.NewEncoder(w).Encode(v)
-	}
+	// Всегда кодируем значение, даже если это nil (запишет "null")
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 func errorResponse(w http.ResponseWriter, status int, msg string) {
@@ -597,13 +611,15 @@ WHERE bin IS NOT NULL AND (role = 'clinic' OR role = 'organization');
 CREATE TABLE IF NOT EXISTS employee_visits (
   id           SERIAL PRIMARY KEY,
   employee_id  TEXT NOT NULL,
+  employee_name TEXT,
+  client_name  TEXT,
   contract_id  INTEGER REFERENCES contracts(id) ON DELETE SET NULL,
   clinic_id    TEXT NOT NULL,
   visit_date   DATE NOT NULL DEFAULT CURRENT_DATE,
   check_in_time TIMESTAMPTZ,
   check_out_time TIMESTAMPTZ,
   status       TEXT NOT NULL DEFAULT 'registered',
-  route_sheet_id INTEGER REFERENCES route_sheets(id) ON DELETE SET NULL,
+  route_sheet  JSONB DEFAULT '[]'::jsonb,
   documents_issued JSONB DEFAULT '[]'::jsonb,
   registered_by TEXT,
   notes        TEXT,
@@ -616,6 +632,39 @@ CREATE TABLE IF NOT EXISTS employee_visits (
 	if err != nil {
 		return nil, fmt.Errorf("migrate employee_visits: %w", err)
 	}
+
+	_, err = tx.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS ambulatory_cards (
+  id           SERIAL PRIMARY KEY,
+  patient_uid  TEXT NOT NULL UNIQUE,
+  iin          TEXT NOT NULL,
+  general      JSONB NOT NULL DEFAULT '{}',
+  medical      JSONB NOT NULL DEFAULT '{}',
+  communication TEXT,
+  patient_instruction TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+`)
+	if err != nil {
+		return nil, fmt.Errorf("migrate ambulatory_cards: %w", err)
+	}
+
+	// Migration Version: 2024-12-22-v3 - FINAL FIX
+	// Добавляем недостающие поля в существующие таблицы (только IF NOT EXISTS)
+	// НЕТ НИКАКИХ ALTER COLUMN DROP NOT NULL для ambulatory_cards!
+	log.Printf("INFO: [v3] Adding missing columns to tables if needed...")
+
+	_, _ = tx.Exec(ctx, `ALTER TABLE employee_visits DROP COLUMN IF EXISTS route_sheet_id;`)
+	_, _ = tx.Exec(ctx, `ALTER TABLE employee_visits ADD COLUMN IF NOT EXISTS route_sheet JSONB DEFAULT '[]'::jsonb;`)
+	_, _ = tx.Exec(ctx, `ALTER TABLE doctors ADD COLUMN IF NOT EXISTS room_number TEXT;`)
+	_, _ = tx.Exec(ctx, `ALTER TABLE employee_visits ADD COLUMN IF NOT EXISTS employee_name TEXT;`)
+	_, _ = tx.Exec(ctx, `ALTER TABLE employee_visits ADD COLUMN IF NOT EXISTS client_name TEXT;`)
+	_, _ = tx.Exec(ctx, `ALTER TABLE ambulatory_cards ADD COLUMN IF NOT EXISTS specialist_entries JSONB DEFAULT '{}'::jsonb;`)
+	_, _ = tx.Exec(ctx, `ALTER TABLE ambulatory_cards ADD COLUMN IF NOT EXISTS lab_results JSONB DEFAULT '{}'::jsonb;`)
+	_, _ = tx.Exec(ctx, `ALTER TABLE ambulatory_cards ADD COLUMN IF NOT EXISTS final_conclusion JSONB DEFAULT '{}'::jsonb;`)
+
+	log.Printf("INFO: Table columns updated successfully")
 
 	_, err = tx.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_employee_visits_employee ON employee_visits(employee_id);`)
 	if err != nil {
@@ -677,10 +726,12 @@ FROM users WHERE phone = $1
 	var createdAt time.Time
 	if err := row.Scan(&u.ID, &u.Role, &u.BIN, &u.CompanyName, &u.LeaderName, &u.Phone, &createdAt, &u.DoctorID, &u.ClinicID, &u.Specialty, &u.ClinicBIN, &u.EmployeeID, &u.ContractID); err != nil {
 		// Not found
+		log.Printf("DEBUG: getUserByPhone: user not found for phone [%s]", phone)
 		jsonResponse(w, http.StatusOK, map[string]any{"user": nil})
 		return
 	}
 	u.CreatedAt = createdAt.Format(time.RFC3339)
+	log.Printf("DEBUG: getUserByPhone: found user [%s] role=[%s] for phone [%s]", u.ID, u.Role, phone)
 	jsonResponse(w, http.StatusOK, map[string]any{"user": u})
 }
 
@@ -779,17 +830,19 @@ LIMIT 1
 INSERT INTO users (id, role, bin, company_name, leader_name, phone, doctor_id, clinic_id, specialty, clinic_bin, employee_id, contract_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 ON CONFLICT (phone) DO UPDATE SET
-  id = EXCLUDED.id,
-  role = EXCLUDED.role,
-  bin = EXCLUDED.bin,
-  company_name = EXCLUDED.company_name,
-  leader_name = EXCLUDED.leader_name,
-  doctor_id = EXCLUDED.doctor_id,
-  clinic_id = EXCLUDED.clinic_id,
-  specialty = EXCLUDED.specialty,
-  clinic_bin = EXCLUDED.clinic_bin,
-  employee_id = EXCLUDED.employee_id,
-  contract_id = EXCLUDED.contract_id
+  role = CASE 
+    WHEN EXCLUDED.role = 'doctor' OR EXCLUDED.role = 'registration' THEN EXCLUDED.role 
+    ELSE users.role 
+  END,
+  bin = COALESCE(EXCLUDED.bin, users.bin),
+  company_name = COALESCE(EXCLUDED.company_name, users.company_name),
+  leader_name = COALESCE(EXCLUDED.leader_name, users.leader_name),
+  doctor_id = COALESCE(EXCLUDED.doctor_id, users.doctor_id),
+  clinic_id = COALESCE(EXCLUDED.clinic_id, users.clinic_id),
+  specialty = COALESCE(EXCLUDED.specialty, users.specialty),
+  clinic_bin = COALESCE(EXCLUDED.clinic_bin, users.clinic_bin),
+  employee_id = COALESCE(EXCLUDED.employee_id, users.employee_id),
+  contract_id = COALESCE(EXCLUDED.contract_id, users.contract_id)
 `, in.ID, in.Role, in.BIN, in.CompanyName, in.LeaderName, in.Phone, in.DoctorID, in.ClinicID, in.Specialty, in.ClinicBIN, in.EmployeeID, in.ContractID)
 	if err != nil {
 		log.Printf("createUser error: %v", err)
@@ -1173,6 +1226,64 @@ ORDER BY name
 	jsonResponse(w, http.StatusOK, res)
 }
 
+// syncDoctorToUser создаёт или обновляет аккаунт пользователя для врача
+func syncDoctorToUser(ctx context.Context, d Doctor) error {
+	if d.Phone == "" {
+		return nil
+	}
+
+	// Очищаем телефон (только цифры)
+	cleanPhone := ""
+	for _, r := range d.Phone {
+		if r >= '0' && r <= '9' {
+			cleanPhone += string(r)
+		}
+	}
+	if len(cleanPhone) == 0 {
+		return nil
+	}
+
+	// Определяем роль
+	role := "doctor"
+	if strings.ToLower(d.Specialty) == "регистратор" {
+		role = "registration"
+	}
+
+	// Проверяем существующего пользователя по телефону
+	var existingUID string
+	_ = db.QueryRow(ctx, "SELECT id FROM users WHERE phone = $1", cleanPhone).Scan(&existingUID)
+
+	uid := existingUID
+	if existingUID == "" {
+		uid = fmt.Sprintf("%s_%d", role, time.Now().UnixNano())
+	}
+
+	// Используем имя врача как компанию и лидера
+	companyName := d.Name
+	leaderName := d.Name
+
+	_, err := db.Exec(ctx, `
+INSERT INTO users (id, role, phone, company_name, leader_name, doctor_id, clinic_id, specialty, clinic_bin)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, (SELECT bin FROM users WHERE id = $7 AND role = 'clinic' LIMIT 1))
+ON CONFLICT (phone) DO UPDATE SET
+  role = EXCLUDED.role,
+  company_name = EXCLUDED.company_name,
+  leader_name = EXCLUDED.leader_name,
+  doctor_id = EXCLUDED.doctor_id,
+  clinic_id = EXCLUDED.clinic_id,
+  specialty = EXCLUDED.specialty,
+  clinic_bin = EXCLUDED.clinic_bin
+`, uid, role, cleanPhone, companyName, leaderName, fmt.Sprintf("%d", d.ID), d.ClinicUID, d.Specialty)
+
+	if err != nil {
+		log.Printf("syncDoctorToUser error: %v", err)
+		return err
+	}
+
+	log.Printf("DEBUG: syncDoctorToUser success for %s (%s) role=%s", d.Name, cleanPhone, role)
+	return nil
+}
+
 // POST /api/clinics/{clinicUid}/doctors
 func createDoctorHandler(w http.ResponseWriter, r *http.Request) {
 	// Парсим путь правильно: /api/clinics/{clinicUid}/doctors
@@ -1221,6 +1332,9 @@ RETURNING id
 
 	in.ID = id
 	in.ClinicUID = clinicUID
+
+	// Автоматическая синхронизация с таблицей пользователей
+	syncDoctorToUser(ctx, in)
 
 	// Отправляем событие о создании врача всем пользователям клиники
 	broadcastToUser(clinicUID, "doctor_created", map[string]interface{}{
@@ -1289,6 +1403,9 @@ WHERE id = $6 AND clinic_uid = $7
 
 	in.ID = id
 	in.ClinicUID = clinicUID
+
+	// Автоматическая синхронизация с таблицей пользователей
+	syncDoctorToUser(ctx, in)
 
 	// Отправляем событие об обновлении врача всем пользователям клиники
 	broadcastToUser(clinicUID, "doctor_updated", map[string]interface{}{
@@ -1368,7 +1485,387 @@ func deleteDoctorHandler(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// --- ROUTE SHEETS, EMPLOYEE VISITS HANDLERS --- (REMOVED)
+// --- ROUTE SHEETS, EMPLOYEE VISITS HANDLERS ---
+
+type CreateVisitRequest struct {
+	EmployeeID   string          `json:"employeeId"`
+	EmployeeName string          `json:"employeeName"`
+	ClientName   string          `json:"clientName"`
+	ContractID   int64           `json:"contractId"`
+	ClinicID     string          `json:"clinicId"`
+	Phone        string          `json:"phone"`
+	RouteSheet   json.RawMessage `json:"routeSheet"`
+}
+
+func createVisitHandler(w http.ResponseWriter, r *http.Request) {
+	var in CreateVisitRequest
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	log.Printf("DEBUG createVisit: employeeId=%s, employeeName=%s, clinicId=%s, routeSheet=%s", in.EmployeeID, in.EmployeeName, in.ClinicID, string(in.RouteSheet))
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// 1. Создаем или обновляем пользователя-сотрудника
+	contractIDStr := ""
+	if in.ContractID > 0 {
+		contractIDStr = fmt.Sprintf("%d", in.ContractID)
+	}
+	_, err := db.Exec(ctx, `
+		INSERT INTO users (id, role, phone, employee_id, contract_id, clinic_id, company_name)
+		VALUES ($1, 'employee', $2, $1, $3, $4, $5)
+		ON CONFLICT (phone) DO UPDATE SET
+			employee_id = EXCLUDED.employee_id,
+			contract_id = EXCLUDED.contract_id,
+			clinic_id = EXCLUDED.clinic_id,
+			company_name = EXCLUDED.company_name
+	`, in.EmployeeID, in.Phone, contractIDStr, in.ClinicID, in.EmployeeName)
+	if err != nil {
+		log.Printf("Error creating employee user: %v", err)
+	}
+
+	// 2. Создаем визит
+	var visitID int64
+	err = db.QueryRow(ctx, `
+		INSERT INTO employee_visits (employee_id, employee_name, client_name, contract_id, clinic_id, status, route_sheet, check_in_time)
+		VALUES ($1, $2, $3, $4, $5, 'in_progress', $6, NOW())
+		RETURNING id
+	`, in.EmployeeID, in.EmployeeName, in.ClientName, in.ContractID, in.ClinicID, in.RouteSheet).Scan(&visitID)
+
+	if err != nil {
+		log.Printf("createVisit error: %v", err)
+		errorResponse(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	// 3. Отправляем уведомления через WebSocket
+	broadcastToUser(in.ClinicID, "visit_started", map[string]interface{}{
+		"visitId":    visitID,
+		"employeeId": in.EmployeeID,
+	})
+
+	jsonResponse(w, http.StatusCreated, map[string]interface{}{"id": visitID})
+}
+
+func listVisitsHandler(w http.ResponseWriter, r *http.Request) {
+	clinicID := r.URL.Query().Get("clinicId")
+	doctorID := r.URL.Query().Get("doctorId")
+	employeeID := r.URL.Query().Get("employeeId")
+
+	log.Printf("DEBUG listVisits: clinicID=%s, doctorID=%s, employeeID=%s", clinicID, doctorID, employeeID)
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// 0. Очищаем старые визиты (миграция данных)
+	db.Exec(ctx, `UPDATE employee_visits SET route_sheet = '[]'::jsonb WHERE route_sheet IS NULL`)
+	db.Exec(ctx, `UPDATE employee_visits SET employee_name = 'Пациент ' || employee_id WHERE employee_name IS NULL`)
+	db.Exec(ctx, `UPDATE employee_visits SET client_name = 'Организация' WHERE client_name IS NULL`)
+
+	// Проверяем, сколько всего визитов в базе (для отладки)
+	var totalVisitsCount int
+	db.QueryRow(ctx, "SELECT COUNT(*) FROM employee_visits").Scan(&totalVisitsCount)
+	log.Printf("DEBUG listVisits: Total visits in database: %d", totalVisitsCount)
+	if clinicID != "" {
+		var clinicVisitsCount int
+		db.QueryRow(ctx, "SELECT COUNT(*) FROM employee_visits WHERE clinic_id = $1", clinicID).Scan(&clinicVisitsCount)
+		log.Printf("DEBUG listVisits: Visits for clinicId=%s: %d", clinicID, clinicVisitsCount)
+	}
+
+	query := `SELECT id, employee_id, employee_name, client_name, contract_id, clinic_id, visit_date, status, route_sheet, check_in_time FROM employee_visits WHERE 1=1`
+	args := []interface{}{}
+	argIdx := 1
+
+	if clinicID != "" {
+		query += fmt.Sprintf(" AND clinic_id = $%d", argIdx)
+		args = append(args, clinicID)
+		argIdx++
+	}
+	if employeeID != "" {
+		query += fmt.Sprintf(" AND employee_id = $%d", argIdx)
+		args = append(args, employeeID)
+		argIdx++
+	}
+
+	query += " ORDER BY created_at DESC"
+	log.Printf("DEBUG listVisits: SQL query=%s, args=%v", query, args)
+
+	rows, err := db.Query(ctx, query, args...)
+	if err != nil {
+		log.Printf("ERROR listVisits: query failed: %v", err)
+		errorResponse(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	defer rows.Close()
+
+	var res []map[string]interface{}
+	totalRows := 0
+	for rows.Next() {
+		totalRows++
+		var id int64
+		var contractID *int64
+		var employeeID, clinicID, status string
+		var employeeName, clientName *string
+		var visitDate time.Time
+		var routeSheet []byte
+		var checkInTime *time.Time
+
+		err := rows.Scan(&id, &employeeID, &employeeName, &clientName, &contractID, &clinicID, &visitDate, &status, &routeSheet, &checkInTime)
+		if err != nil {
+			log.Printf("Scan visit error: %v", err)
+			continue
+		}
+
+		// Безопасно разыменовываем имя сотрудника
+		empName := ""
+		if employeeName != nil {
+			empName = *employeeName
+		}
+
+		// Безопасно разыменовываем название организации
+		orgName := ""
+		if clientName != nil {
+			orgName = *clientName
+		}
+
+		// Безопасно разыменовываем ID контракта
+		cID := int64(0)
+		if contractID != nil {
+			cID = *contractID
+		}
+
+		item := map[string]interface{}{
+			"id":           id,
+			"employeeId":   employeeID,
+			"employeeName": empName,
+			"clientName":   orgName,
+			"contractId":   cID,
+			"clinicId":     clinicID,
+			"visitDate":    visitDate.Format("2006-01-02"),
+			"status":       status,
+			"routeSheet":   json.RawMessage(routeSheet),
+			"checkInTime":  checkInTime,
+		}
+
+		// Если фильтруем по врачу, проверяем есть ли он в маршрутном листе
+		if doctorID != "" {
+			var rs []map[string]interface{}
+			if err := json.Unmarshal(routeSheet, &rs); err != nil {
+				log.Printf("ERROR listVisits: Error unmarshaling routeSheet for visit %d: %v, routeSheet=%s", id, err, string(routeSheet))
+				continue
+			}
+			found := false
+
+			// Очищаем doctorID (специальность) для надежного сравнения
+			// Убираем все не-буквенные и не-цифровые символы для нормализации
+			cleanDoctorID := strings.ToLower(strings.TrimSpace(doctorID))
+			cleanDoctorID = strings.ReplaceAll(cleanDoctorID, "врач-", "")
+			cleanDoctorID = strings.ReplaceAll(cleanDoctorID, "врач", "")
+			cleanDoctorID = strings.TrimSpace(cleanDoctorID)
+
+			log.Printf("DEBUG listVisits: Checking visit %d for doctorID=%s (cleaned: %s), routeSheet has %d steps", id, doctorID, cleanDoctorID, len(rs))
+
+			for idx, step := range rs {
+				stepSpec, ok := step["specialty"].(string)
+				if !ok || stepSpec == "" {
+					log.Printf("DEBUG listVisits: Step %d has no specialty (type=%v, value=%v)", idx, step["type"], stepSpec)
+					continue
+				}
+
+				// Нормализуем специальность из маршрутного листа
+				cleanStepSpec := strings.ToLower(strings.TrimSpace(stepSpec))
+				cleanStepSpec = strings.ReplaceAll(cleanStepSpec, "врач-", "")
+				cleanStepSpec = strings.ReplaceAll(cleanStepSpec, "врач", "")
+				cleanStepSpec = strings.TrimSpace(cleanStepSpec)
+
+				// Также получаем doctorId из step, если он есть (может быть числом или строкой)
+				var stepDoctorIDStr string
+				if stepDoctorID, hasDoctorID := step["doctorId"]; hasDoctorID && stepDoctorID != nil {
+					// Преобразуем doctorId в строку (может быть число или строка в JSON)
+					stepDoctorIDStr = fmt.Sprintf("%v", stepDoctorID)
+				}
+
+				log.Printf("DEBUG listVisits: Step %d: specialty=%s (cleaned: %s), doctorId=%s, comparing specialty with %s", idx, stepSpec, cleanStepSpec, stepDoctorIDStr, cleanDoctorID)
+
+				// Сравниваем специальности (прямое совпадение или частичное)
+				specialtyMatch := cleanStepSpec == cleanDoctorID || strings.Contains(cleanStepSpec, cleanDoctorID) || strings.Contains(cleanDoctorID, cleanStepSpec)
+
+				if specialtyMatch {
+					found = true
+					log.Printf("DEBUG listVisits: ✓ MATCH FOUND for visit %d: stepSpec=%s (cleaned: %s) matches doctorID=%s (cleaned: %s)", id, stepSpec, cleanStepSpec, doctorID, cleanDoctorID)
+					break
+				}
+			}
+			if !found {
+				log.Printf("DEBUG listVisits: ✗ No matching specialty found for visit %d, doctorID=%s (cleaned: %s) in routeSheet with %d steps", id, doctorID, cleanDoctorID, len(rs))
+				continue
+			}
+		}
+
+		res = append(res, item)
+	}
+
+	log.Printf("DEBUG listVisits: Found %d visits (filtered from %d total rows), returning %d results", len(res), totalRows, len(res))
+	// Всегда возвращаем массив, даже если пустой
+	if res == nil {
+		res = []map[string]interface{}{}
+	}
+	jsonResponse(w, http.StatusOK, res)
+}
+
+// --- AMBULATORY CARDS HANDLERS ---
+
+func getAmbulatoryCardHandler(w http.ResponseWriter, r *http.Request) {
+	patientUID := r.URL.Query().Get("patientUid")
+	iin := r.URL.Query().Get("iin")
+
+	if patientUID == "" && iin == "" {
+		errorResponse(w, http.StatusBadRequest, "patientUid or iin is required")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	var card AmbulatoryCard
+	var general, medical, spec, labs, final, comm []byte
+	var createdAt, updatedAt time.Time
+
+	query := `SELECT id, patient_uid, iin, general, medical, specialist_entries, lab_results, final_conclusion, communication, patient_instruction, created_at, updated_at 
+	          FROM ambulatory_cards WHERE `
+	var arg any
+	if patientUID != "" {
+		query += "patient_uid = $1"
+		arg = patientUID
+	} else {
+		query += "iin = $1"
+		arg = iin
+	}
+
+	err := db.QueryRow(ctx, query, arg).Scan(
+		&card.ID, &card.PatientUID, &card.IIN, &general, &medical, &spec, &labs, &final, &comm, &card.Instr, &createdAt, &updatedAt,
+	)
+
+	if err != nil {
+		// Если не найдено, это не ошибка, просто возвращаем null
+		jsonResponse(w, http.StatusOK, nil)
+		return
+	}
+
+	card.General = json.RawMessage(general)
+	card.Medical = json.RawMessage(medical)
+	card.Spec = json.RawMessage(spec)
+	card.Labs = json.RawMessage(labs)
+	card.Final = json.RawMessage(final)
+	card.Comm = json.RawMessage(comm)
+	card.CreatedAt = createdAt.Format(time.RFC3339)
+	card.UpdatedAt = updatedAt.Format(time.RFC3339)
+
+	jsonResponse(w, http.StatusOK, card)
+}
+
+func upsertAmbulatoryCardHandler(w http.ResponseWriter, r *http.Request) {
+	var in AmbulatoryCard
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	if in.PatientUID == "" && in.IIN == "" {
+		errorResponse(w, http.StatusBadRequest, "iin or patientUid are required")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// Используем ON CONFLICT для обновления если уже существует
+	_, err := db.Exec(ctx, `
+		INSERT INTO ambulatory_cards (patient_uid, iin, general, medical, specialist_entries, lab_results, final_conclusion, communication, patient_instruction, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+		ON CONFLICT (patient_uid) DO UPDATE SET
+			iin = EXCLUDED.iin,
+			general = EXCLUDED.general,
+			medical = EXCLUDED.medical,
+			specialist_entries = EXCLUDED.specialist_entries,
+			lab_results = EXCLUDED.lab_results,
+			final_conclusion = EXCLUDED.final_conclusion,
+			communication = EXCLUDED.communication,
+			patient_instruction = EXCLUDED.patient_instruction,
+			updated_at = NOW()
+	`, in.PatientUID, in.IIN, in.General, in.Medical, in.Spec, in.Labs, in.Final, in.Comm, in.Instr)
+
+	if err != nil {
+		log.Printf("upsertAmbulatoryCard error: %v", err)
+		errorResponse(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	// АВТОМАТИЧЕСКАЯ ОТМЕТКА В МАРШРУТНОМ ЛИСТЕ
+	if in.Spec != nil {
+		var entries map[string]interface{}
+		if err := json.Unmarshal(in.Spec, &entries); err == nil {
+			for specialty := range entries {
+				log.Printf("Updating route sheet for employee %s, specialty: %s", in.PatientUID, specialty)
+
+				// Более надежный запрос обновления элемента в JSONB массиве
+				res, err := db.Exec(ctx, `
+					UPDATE employee_visits 
+					SET 
+						route_sheet = (
+							SELECT jsonb_agg(
+								CASE 
+									WHEN LOWER(TRIM(item->>'specialty')) = LOWER(TRIM($1)) 
+									THEN item || jsonb_build_object('status', 'completed', 'completedAt', NOW())
+									ELSE item 
+								END
+							)
+							FROM jsonb_array_elements(route_sheet) AS item
+						),
+						status = CASE WHEN status = 'registered' THEN 'in_progress' ELSE status END,
+						updated_at = NOW()
+					WHERE employee_id = $2 AND status IN ('registered', 'in_progress')
+				`, specialty, in.PatientUID)
+
+				if err != nil {
+					log.Printf("Error updating route_sheet for %s: %v", specialty, err)
+				} else {
+					rows := res.RowsAffected()
+					log.Printf("Route sheet updated, rows affected: %d", rows)
+				}
+			}
+		}
+
+		// Оповещаем сотрудника (по ИИН и по UUID если возможно)
+		broadcastToUser(in.PatientUID, "visit_updated", map[string]interface{}{
+			"employeeId": in.PatientUID,
+			"status":     "updated",
+		})
+
+		// Находим UUID пользователя по ИИН для WebSocket
+		var realUserID string
+		_ = db.QueryRow(ctx, "SELECT id FROM users WHERE employee_id = $1 LIMIT 1", in.PatientUID).Scan(&realUserID)
+		if realUserID != "" && realUserID != in.PatientUID {
+			broadcastToUser(realUserID, "visit_updated", map[string]interface{}{
+				"employeeId": in.PatientUID,
+			})
+		}
+
+		// Оповещаем клинику
+		var clinicID string
+		_ = db.QueryRow(ctx, "SELECT clinic_id FROM employee_visits WHERE employee_id = $1 AND status IN ('registered', 'in_progress') LIMIT 1", in.PatientUID).Scan(&clinicID)
+		if clinicID != "" {
+			broadcastToUser(clinicID, "visit_updated", map[string]interface{}{
+				"employeeId": in.PatientUID,
+			})
+		}
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
+}
 
 // --- MAIN ---
 
@@ -1406,6 +1903,18 @@ func main() {
 		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
 	})
 
+	// Visits
+	mux.HandleFunc("/api/visits", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			createVisitHandler(w, r)
+		case http.MethodGet:
+			listVisitsHandler(w, r)
+		default:
+			errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+	})
+
 	// Contracts
 	mux.HandleFunc("/api/contracts", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -1413,6 +1922,18 @@ func main() {
 			listContractsHandler(w, r)
 		case http.MethodPost:
 			createContractHandler(w, r)
+		default:
+			errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+	})
+
+	// Ambulatory Cards
+	mux.HandleFunc("/api/ambulatory-cards", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			getAmbulatoryCardHandler(w, r)
+		case http.MethodPost:
+			upsertAmbulatoryCardHandler(w, r)
 		default:
 			errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
 		}

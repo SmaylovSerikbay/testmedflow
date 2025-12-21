@@ -11,7 +11,7 @@ import {
   UploadIcon, LoaderIcon, SparklesIcon, LogoIcon, 
   FileTextIcon, CalendarIcon, UsersIcon, CheckShieldIcon,
   PenIcon, SettingsIcon, UserMdIcon, TrashIcon, PlusIcon,
-  BriefcaseIcon, ChevronLeftIcon, FileSignatureIcon, LinkIcon, LogoutIcon
+  BriefcaseIcon, ChevronLeftIcon, FileSignatureIcon, LinkIcon, LogoutIcon, UserIcon
 } from './Icons';
 import EmployeeModal from './EmployeeModal';
 import EmployeeTableRow from './EmployeeTableRow';
@@ -20,6 +20,9 @@ import EmployeeTableRow from './EmployeeTableRow';
 const ContractsList = React.lazy(() => import('./ContractsList'));
 const ContractWorkspace = React.lazy(() => import('./ContractWorkspace'));
 const DoctorsList = React.lazy(() => import('./DoctorsList'));
+const RegistrationWorkspace = React.lazy(() => import('./RegistrationWorkspace'));
+const DoctorWorkspace = React.lazy(() => import('./DoctorWorkspace'));
+const EmployeeWorkspace = React.lazy(() => import('./EmployeeWorkspace'));
 
 // --- CONSTANTS ---
 const SPECIALTIES = [
@@ -155,10 +158,14 @@ const useUserProfile = () => {
             const apiUser = await apiGetUserByPhone(phone);
             
             if (apiUser) {
-                // Для врачей и регистраторов: если нет clinicBin, но есть bin, используем его
-                const clinicBin = apiUser.clinicBin || ((apiUser.role === 'doctor' || apiUser.role === 'registration') ? apiUser.bin : undefined);
+                // Для врачей и регистраторов: приоритет отдаем clinicBin и clinicId из базы
+                const role = apiUser.role;
+                const isStaff = role === 'doctor' || role === 'registration';
                 
-const userData: UserProfile = {
+                const clinicBin = apiUser.clinicBin || (isStaff ? apiUser.bin : undefined);
+                const clinicId = apiUser.clinicId || (isStaff ? apiUser.uid : undefined);
+                
+                const userData: UserProfile = {
                     uid: apiUser.uid,
                     role: apiUser.role,
                     bin: apiUser.bin,
@@ -166,16 +173,14 @@ const userData: UserProfile = {
                     leaderName: apiUser.leaderName,
                     phone: apiUser.phone,
                     createdAt: apiUser.createdAt || new Date().toISOString(),
-                    // Загружаем дополнительные поля для врачей
                     doctorId: apiUser.doctorId,
-                    clinicId: apiUser.clinicId,
+                    clinicId: clinicId,
                     specialty: apiUser.specialty,
                     clinicBin: clinicBin,
-                    // Для сотрудников
                     employeeId: apiUser.employeeId,
                     contractId: apiUser.contractId,
                 };
-                
+
                 // Если у врача или регистратора нет clinicBin, но есть bin, обновляем пользователя в базе
                 if ((apiUser.role === 'doctor' || apiUser.role === 'registration') && !apiUser.clinicBin && apiUser.bin) {
                     try {
@@ -340,6 +345,7 @@ const useDoctors = (currentUser: UserProfile | null, selectedContract: Contract 
         specialty: d.specialty,
         phone: d.phone,
         isChairman: d.isChairman,
+        roomNumber: d.roomNumber,
       }));
       setDoctors(mapped);
     } catch (e) {
@@ -374,19 +380,24 @@ interface ToastState {
 
 const useToast = () => {
   const [toast, setToast] = useState<ToastState | null>(null);
-  const [toastTimeoutId, setToastTimeoutId] = useState<number | null>(null);
+  const timeoutRef = React.useRef<number | null>(null);
 
   const showToast = useCallback((type: ToastType, message: string, duration: number = 4000) => {
-    if (toastTimeoutId) {
-      window.clearTimeout(toastTimeoutId);
+    if (timeoutRef.current) {
+      window.clearTimeout(timeoutRef.current);
     }
     setToast({ type, message });
-    const id = window.setTimeout(() => {
+    
+    if (message) {
+      timeoutRef.current = window.setTimeout(() => {
+        setToast(null);
+        timeoutRef.current = null;
+      }, duration);
+    } else {
       setToast(null);
-      setToastTimeoutId(null);
-    }, duration);
-    setToastTimeoutId(id);
-  }, [toastTimeoutId]);
+      timeoutRef.current = null;
+    }
+  }, []);
 
   return { toast, showToast };
 };
@@ -639,38 +650,57 @@ const Header: React.FC<HeaderProps> = React.memo(({
 
           {/* Center: Navigation Tabs */}
           <nav className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
-            <button 
-              onClick={handleContractsClick}
-              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                activeSidebarItem === 'contracts' 
-                  ? 'bg-white text-blue-600 shadow-sm' 
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <BriefcaseIcon className="w-4 h-4"/>
-              <span>Договоры</span>
-              {contracts.length > 0 && (
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                  activeSidebarItem === 'contracts' 
-                    ? 'bg-blue-100 text-blue-700' 
-                    : 'bg-slate-200 text-slate-700'
-                }`}>
-                  {contracts.length}
-                </span>
-              )}
-            </button>
-            {currentUser?.role === 'clinic' && (
-              <button 
-                onClick={handleDoctorsClick}
-                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                  activeSidebarItem === 'doctors' 
-                    ? 'bg-white text-blue-600 shadow-sm' 
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <UserMdIcon className="w-4 h-4"/>
-                <span>Врачи</span>
-              </button>
+            {currentUser?.role === 'clinic' || currentUser?.role === 'organization' ? (
+              <>
+                <button 
+                  onClick={handleContractsClick}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                    activeSidebarItem === 'contracts' 
+                      ? 'bg-white text-blue-600 shadow-sm' 
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <BriefcaseIcon className="w-4 h-4"/>
+                  <span>Договоры</span>
+                  {contracts.length > 0 && (
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      activeSidebarItem === 'contracts' 
+                        ? 'bg-blue-100 text-blue-700' 
+                        : 'bg-slate-200 text-slate-700'
+                    }`}>
+                      {contracts.length}
+                    </span>
+                  )}
+                </button>
+                {currentUser?.role === 'clinic' && (
+                  <button 
+                    onClick={handleDoctorsClick}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                      activeSidebarItem === 'doctors' 
+                        ? 'bg-white text-blue-600 shadow-sm' 
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <UserMdIcon className="w-4 h-4"/>
+                    <span>Врачи</span>
+                  </button>
+                )}
+              </>
+            ) : currentUser?.role === 'registration' ? (
+              <div className="px-4 py-2 text-sm font-bold text-blue-600 flex items-center gap-2">
+                <CheckShieldIcon className="w-4 h-4" />
+                Рабочее место Регистратора
+              </div>
+            ) : currentUser?.role === 'doctor' ? (
+              <div className="px-4 py-2 text-sm font-bold text-blue-600 flex items-center gap-2">
+                <UserMdIcon className="w-4 h-4" />
+                Кабинет Врача: {currentUser.specialty}
+              </div>
+            ) : (
+              <div className="px-4 py-2 text-sm font-bold text-blue-600 flex items-center gap-2">
+                <UserIcon className="w-4 h-4" />
+                Личный кабинет сотрудника
+              </div>
             )}
           </nav>
 
@@ -718,6 +748,46 @@ const MainContent: React.FC<MainContentProps> = ({
   refetchContracts,
   refetchDoctors
 }) => {
+  // Role-based main workspace
+  if (currentUser?.role === 'registration') {
+    return (
+      <div className="flex-1 overflow-auto">
+        <React.Suspense fallback={<div className="flex items-center justify-center h-full"><LoaderIcon className="w-8 h-8 animate-spin text-slate-300" /></div>}>
+          <RegistrationWorkspace 
+            currentUser={currentUser}
+            showToast={showToast}
+          />
+        </React.Suspense>
+      </div>
+    );
+  }
+
+  if (currentUser?.role === 'doctor') {
+    return (
+      <div className="flex-1 overflow-auto">
+        <React.Suspense fallback={<div className="flex items-center justify-center h-full"><LoaderIcon className="w-8 h-8 animate-spin text-slate-300" /></div>}>
+          <DoctorWorkspace 
+            currentUser={currentUser}
+            showToast={showToast}
+          />
+        </React.Suspense>
+      </div>
+    );
+  }
+
+  if (currentUser?.role === 'employee') {
+    return (
+      <div className="flex-1 overflow-auto">
+        <React.Suspense fallback={<div className="flex items-center justify-center h-full"><LoaderIcon className="w-8 h-8 animate-spin text-slate-300" /></div>}>
+          <EmployeeWorkspace 
+            currentUser={currentUser}
+            showToast={showToast}
+          />
+        </React.Suspense>
+      </div>
+    );
+  }
+
   if (activeSidebarItem === 'contracts' && selectedContract) {
     // Безопасное получение ключа для ContractWorkspace
     const workspaceKey = selectedContractKey || selectedContract?.id || 'default';

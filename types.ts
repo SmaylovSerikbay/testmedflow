@@ -35,8 +35,125 @@ export interface Employee {
   healthGroup?: 'I' | 'II' | 'III' | 'IV' | 'V'; // Группа здоровья
   phone?: string;                  // Телефон сотрудника (извлекается из note)
   userId?: string;                  // UID пользователя, если зарегистрирован
+  visitId?: number;                 // ID текущего визита
 }
 
+export interface EmployeeVisit {
+  id: number;
+  employeeId: string;
+  contractId: number;
+  clinicId: string;
+  visitDate: string;
+  status: 'registered' | 'in_progress' | 'completed' | 'cancelled';
+  routeSheet: RouteSheetItem[];
+  checkInTime?: string;
+  checkOutTime?: string;
+}
+
+export interface RouteSheetItem {
+  specialty: string;
+  doctorId?: string;
+  doctorName?: string;
+  roomNumber?: string;
+  status: 'pending' | 'completed';
+  completedAt?: string;
+  notes?: string;
+}
+
+export interface AmbulatoryCard {
+  id?: number;
+  patientUid: string;
+  iin: string;
+  
+  // 1. Паспортная часть (стр. 1-2)
+  general: {
+    fullName: string;
+    dob: string;
+    gender: 'male' | 'female';
+    age: number;
+    nationality?: string;
+    residentType: 'city' | 'village';
+    citizenship?: string;
+    address: string;
+    workPlace?: string;
+    position?: string;
+    education?: string;
+    insuranceCompany?: string;
+    insurancePolicyNumber?: string;
+    compensationType?: string;
+    socialStatus?: string;
+    visitReason?: string;
+  };
+
+  // 2. Минимальные медицинские данные
+  medical: {
+    bloodGroup?: string;
+    rhFactor?: string;
+    allergies?: string;
+    pregnancyStatus?: string;
+    screeningResults?: string;
+    badHabits?: string;
+    vaccinations?: string;
+    diseaseHistory?: string;
+    currentProblems?: string;
+    dynamicObservation?: string;
+    disabilityGroup?: string;
+    currentMedications?: string;
+    anthropometry?: {
+      height?: string;
+      weight?: string;
+      bmi?: string;
+      pressure?: string;
+      pulse?: string;
+    };
+    fallRisk?: string;
+    painScore?: string;
+  };
+
+  // 3. Записи специалистов (стр. 3-20+)
+  // Каждый врач пишет в свой раздел
+  specialistEntries: {
+    [specialty: string]: {
+      doctorName: string;
+      date: string;
+      complaints: string;      // Жалобы
+      anamnesis: string;       // Анамнез
+      objective: string;       // Объективные данные (Status Praesens)
+      diagnosis: string;       // Диагноз (МКБ-10)
+      recommendations: string; // Рекомендации
+      fitnessStatus: 'fit' | 'unfit' | 'needs_observation'; // Профпригодность
+    };
+  };
+
+  // 4. Результаты лабораторных и функциональных исследований
+  labResults: {
+    [testName: string]: {
+      date: string;
+      value: string;
+      norm?: string;
+      fileUrl?: string;
+    };
+  };
+
+  // 5. Итоговое заключение председателя комиссии (п. 115 Приказа)
+  finalConclusion?: {
+    chairmanName: string;
+    date: string;
+    healthGroup: 'I' | 'II' | 'III' | 'IV' | 'V';
+    isFit: boolean;
+    restrictions?: string;
+    nextExamDate: string;
+  };
+
+  communication?: {
+    language?: string;
+    livingConditions?: string;
+  };
+  
+  patientInstruction?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
 
 export type ContractStatus = 'request' | 'negotiation' | 'planning' | 'execution' | 'completed';
 

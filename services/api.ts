@@ -1,4 +1,4 @@
-import { Employee, ContractDocument } from '../types';
+import { Employee, ContractDocument, AmbulatoryCard } from '../types';
 
 // Используем относительный путь для API - проксируется через Vite
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
@@ -36,11 +36,22 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
     const contentType = res.headers.get('content-type');
     if (contentType && contentType.includes('application/json')) {
-      const jsonData = await res.json();
-      if (import.meta.env.DEV) {
-        console.log(`API Response for ${path}:`, jsonData);
+      const text = await res.text();
+      if (!text || text.trim() === '') {
+        return null as T;
       }
-      return jsonData as T;
+      try {
+        const jsonData = JSON.parse(text);
+        if (import.meta.env.DEV) {
+          console.log(`API Response for ${path}:`, jsonData);
+        }
+        return jsonData as T;
+      } catch (e) {
+        if (import.meta.env.DEV) {
+          console.error(`API JSON Parse Error for ${path}:`, e, 'Text:', text);
+        }
+        return null as T;
+      }
     } else {
       const text = await res.text();
       if (import.meta.env.DEV) {
@@ -131,6 +142,49 @@ export async function apiCreateUser(user: ApiUser): Promise<void> {
   });
 }
 
+// --- VISITS & ROUTE SHEETS ---
+
+export interface ApiVisit {
+  id: number;
+  employeeId: string;
+  employeeName: string;
+  clientName?: string;
+  contractId: number;
+  clinicId: string;
+  visitDate: string;
+  status: 'registered' | 'in_progress' | 'completed' | 'cancelled';
+  routeSheet: any[];
+  checkInTime?: string;
+}
+
+export async function apiCreateVisit(payload: {
+  employeeId: string;
+  employeeName: string;
+  clientName: string;
+  contractId: number;
+  clinicId: string;
+  phone: string;
+  routeSheet: any[];
+}): Promise<{ id: number }> {
+  return request<{ id: number }>('/api/visits', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function apiListVisits(params: {
+  clinicId?: string;
+  doctorId?: string;
+  employeeId?: string;
+}): Promise<ApiVisit[]> {
+  const query = new URLSearchParams();
+  if (params.clinicId) query.append('clinicId', params.clinicId);
+  if (params.doctorId) query.append('doctorId', params.doctorId);
+  if (params.employeeId) query.append('employeeId', params.employeeId);
+  
+  return request<ApiVisit[]>(`/api/visits?${query.toString()}`);
+}
+
 // --- CONTRACTS ---
 
 export interface ApiCalendarPlan {
@@ -206,6 +260,7 @@ export interface ApiDoctor {
   specialty: string;
   phone?: string;
   isChairman: boolean;
+  roomNumber?: string;
 }
 
 export async function apiListDoctors(clinicUid: string): Promise<ApiDoctor[]> {
@@ -237,6 +292,23 @@ export async function apiDeleteDoctor(clinicUid: string, id: number): Promise<vo
   const encodedUid = encodeURIComponent(clinicUid);
   await request(`/api/clinics/${encodedUid}/doctors/${id}`, {
     method: 'DELETE',
+  });
+}
+
+// --- AMBULATORY CARDS ---
+
+export async function apiGetAmbulatoryCard(params: { patientUid?: string; iin?: string }): Promise<AmbulatoryCard | null> {
+  const query = new URLSearchParams();
+  if (params.patientUid) query.append('patientUid', params.patientUid);
+  if (params.iin) query.append('iin', params.iin);
+  
+  return request<AmbulatoryCard | null>(`/api/ambulatory-cards?${query.toString()}`);
+}
+
+export async function apiUpsertAmbulatoryCard(card: AmbulatoryCard): Promise<void> {
+  await request('/api/ambulatory-cards', {
+    method: 'POST',
+    body: JSON.stringify(card),
   });
 }
 

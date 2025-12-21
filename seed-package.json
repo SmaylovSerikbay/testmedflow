@@ -1,0 +1,14 @@
+{
+  "name": "medflow-database-seeder",
+  "version": "1.0.0",
+  "description": "Скрипт автоматического заполнения базы данных тестовыми данными",
+  "main": "seed-database.js",
+  "scripts": {
+    "seed": "node seed-database.js",
+    "clear": "echo 'Для очистки БД используйте: docker-compose down -v && docker-compose up -d'"
+  },
+  "keywords": ["seed", "database", "testing"],
+  "author": "",
+  "license": "MIT"
+}
+

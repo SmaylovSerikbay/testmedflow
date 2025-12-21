@@ -114,7 +114,7 @@ const DoctorsList: React.FC<DoctorsListProps> = ({
     });
   }, [currentUser, doctors, showToast, onDoctorsChange]);
 
-  const handleSaveDoctor = useCallback(async (doctorData: { name: string; specialty: string; phone: string; isChairman: boolean }) => {
+  const handleSaveDoctor = useCallback(async (doctorData: { name: string; specialty: string; phone: string; isChairman: boolean; roomNumber?: string }) => {
     if (!currentUser) return;
 
     setIsSaving(true);
@@ -128,38 +128,20 @@ const DoctorsList: React.FC<DoctorsListProps> = ({
           specialty: doctorData.specialty,
           phone: cleanPhone || '',
           isChairman: doctorData.isChairman,
-        });
+          roomNumber: doctorData.roomNumber || '',
+        } as any);
 
-        // Обновляем аккаунт для врачей и регистраторов (если указан телефон)
-        if (cleanPhone && (isMedicalSpecialty(doctorData.specialty) || doctorData.specialty === 'Регистратор')) {
-          await createOrUpdateDoctorAccount(String(editingDoctor.id), {
-            phone: cleanPhone,
-            specialty: doctorData.specialty,
-            clinicId: currentUser.uid,
-            clinicBin: currentUser.bin,
-          });
-        }
-        
         showToast('success', 'Врач успешно обновлен');
       } else {
         // Добавление нового врача
-        const created = await apiCreateDoctor(currentUser.uid, {
+        await apiCreateDoctor(currentUser.uid, {
           name: doctorData.name,
           specialty: doctorData.specialty,
           phone: cleanPhone || '',
           isChairman: doctorData.isChairman,
-        });
+          roomNumber: doctorData.roomNumber || '',
+        } as any);
 
-        // Создаем аккаунт для врачей и регистраторов (если указан телефон)
-        if (cleanPhone && (isMedicalSpecialty(doctorData.specialty) || doctorData.specialty === 'Регистратор')) {
-          await createOrUpdateDoctorAccount(String(created.id), {
-            phone: cleanPhone,
-            specialty: doctorData.specialty,
-            clinicId: currentUser.uid,
-            clinicBin: currentUser.bin,
-          });
-        }
-        
         showToast('success', 'Врач успешно добавлен');
       }
       setIsModalOpen(false);
@@ -175,48 +157,6 @@ const DoctorsList: React.FC<DoctorsListProps> = ({
       setIsSaving(false);
     }
   }, [currentUser, editingDoctor, showToast, onDoctorsChange]);
-
-  // Функция создания аккаунта врача или регистратора в системе (через новый API пользователей)
-  const createOrUpdateDoctorAccount = async (doctorId: string, doctorData: any) => {
-    try {
-      // Определяем роль: для регистратора - 'registration', для врачей - 'doctor'
-      const role = doctorData.specialty === 'Регистратор' ? 'registration' : 'doctor';
-      
-      // Проверяем, существует ли уже пользователь с таким телефоном
-      const existingUser = await apiGetUserByPhone(doctorData.phone);
-      
-      if (existingUser) {
-        // Обновляем существующего пользователя
-        await apiCreateUser({
-          uid: existingUser.uid,
-          role,
-          phone: doctorData.phone,
-          doctorId: role === 'doctor' ? doctorId : undefined,
-          clinicId: doctorData.clinicId,
-          clinicBin: doctorData.clinicBin,
-          specialty: role === 'doctor' ? doctorData.specialty : undefined,
-          createdAt: existingUser.createdAt || new Date().toISOString(),
-        } as any);
-        console.log(`✅ Updated existing ${role} account for phone:`, doctorData.phone);
-      } else {
-        // Создаем нового пользователя
-        const userId = `${role}_` + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-        await apiCreateUser({
-          uid: userId,
-          role,
-          phone: doctorData.phone,
-          doctorId: role === 'doctor' ? doctorId : undefined,
-          clinicId: doctorData.clinicId,
-          clinicBin: doctorData.clinicBin,
-          specialty: role === 'doctor' ? doctorData.specialty : undefined,
-          createdAt: new Date().toISOString(),
-        } as any);
-        console.log(`✅ Created new ${role} account for phone:`, doctorData.phone);
-      }
-    } catch (error) {
-      console.error('Error creating/updating doctor/registration account:', error);
-    }
-  };
 
   return (
     <main className="flex-1 flex flex-col relative overflow-auto bg-slate-50">
@@ -323,6 +263,9 @@ const DoctorsTable: React.FC<DoctorsTableProps> = ({ doctors, onEdit, onDelete }
                 Специальность
               </th>
               <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">
+                Кабинет
+              </th>
+              <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">
                 Телефон
               </th>
               <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">
@@ -346,6 +289,15 @@ const DoctorsTable: React.FC<DoctorsTableProps> = ({ doctors, onEdit, onDelete }
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
                   <span className="text-slate-700">{doctor.specialty}</span>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  {doctor.roomNumber ? (
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-800 border border-slate-200">
+                      каб. {doctor.roomNumber}
+                    </span>
+                  ) : (
+                    <span className="text-red-400 text-xs italic">Не указан</span>
+                  )}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
                   {doctor.phone ? (
@@ -403,13 +355,14 @@ const DoctorsTable: React.FC<DoctorsTableProps> = ({ doctors, onEdit, onDelete }
 interface DoctorModalProps {
   doctor: Doctor | null;
   onClose: () => void;
-  onSave: (data: { name: string; specialty: string; phone: string; isChairman: boolean }) => void;
+  onSave: (data: { name: string; specialty: string; phone: string; isChairman: boolean; roomNumber: string }) => void;
   isSaving: boolean;
 }
 
 const DoctorModal: React.FC<DoctorModalProps> = ({ doctor, onClose, onSave, isSaving }) => {
   const [name, setName] = useState(doctor?.name || '');
   const [specialty, setSpecialty] = useState(doctor?.specialty || '');
+  const [roomNumber, setRoomNumber] = useState(doctor?.roomNumber || '');
   const [phone, setPhone] = useState(() => {
     // Форматируем телефон при инициализации, если он есть
     if (doctor?.phone) {
@@ -433,6 +386,7 @@ const DoctorModal: React.FC<DoctorModalProps> = ({ doctor, onClose, onSave, isSa
     if (doctor) {
       setName(doctor.name || '');
       setSpecialty(doctor.specialty || '');
+      setRoomNumber(doctor.roomNumber || '');
       setIsChairman(doctor.isChairman || false);
       if (doctor.phone) {
         const numbers = doctor.phone.replace(/\D/g, '');
@@ -492,8 +446,8 @@ const DoctorModal: React.FC<DoctorModalProps> = ({ doctor, onClose, onSave, isSa
     if ((isMedicalSpecialty(specialty) || specialty === 'Регистратор') && !phone.trim()) {
       return;
     }
-    onSave({ name: name.trim(), specialty, phone: phone.trim(), isChairman });
-  }, [name, specialty, phone, isChairman, onSave]);
+    onSave({ name: name.trim(), specialty, phone: phone.trim(), isChairman, roomNumber: roomNumber.trim() });
+  }, [name, specialty, phone, isChairman, roomNumber, onSave]);
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -566,6 +520,20 @@ const DoctorModal: React.FC<DoctorModalProps> = ({ doctor, onClose, onSave, isSa
             </p>
           </div>
 
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">
+              Номер кабинета
+            </label>
+            <input
+              type="text"
+              value={roomNumber}
+              onChange={(e) => setRoomNumber(e.target.value)}
+              className="w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="Напр: 204"
+              disabled={isSaving}
+            />
+          </div>
+
           <div className="flex items-center gap-3">
             <input
               type="checkbox"
@@ -619,3 +587,6 @@ const DoctorModal: React.FC<DoctorModalProps> = ({ doctor, onClose, onSave, isSa
 };
 
 export default DoctorsList;
+
+// --- EXPORTED MODAL FOR UNIFIED USE ---
+export { DoctorModal };
