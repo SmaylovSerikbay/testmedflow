@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import LandingPage from './components/LandingPage';
 import AuthModal from './components/AuthModal';
 import Dashboard from './components/Dashboard';
-import DoctorDashboard from './components/DoctorDashboard';
-import EmployeeDashboard from './components/EmployeeDashboard';
-import Form052Editor from './components/Form052Editor';
+import DoctorWorkspace from './components/DoctorWorkspace';
+import EmployeePortal from './components/EmployeePortal';
+import RegistrationDesk from './components/RegistrationDesk';
 import { AppState, UserProfile } from './types';
 import { apiGetUserByPhone, apiCreateUser } from './services/api';
 
@@ -86,9 +86,11 @@ const App: React.FC = () => {
           
           // Определяем состояние приложения в зависимости от роли
           if (userData.role === 'doctor') {
-            setAppState(AppState.DOCTOR_DASHBOARD);
+            setAppState(AppState.DOCTOR_WORKSPACE);
           } else if (userData.role === 'employee') {
-            setAppState(AppState.EMPLOYEE_DASHBOARD);
+            setAppState(AppState.EMPLOYEE_PORTAL);
+          } else if (userData.role === 'registration') {
+            setAppState(AppState.REGISTRATION_DESK);
           } else {
             setAppState(AppState.DASHBOARD);
           }
@@ -189,9 +191,11 @@ const App: React.FC = () => {
       
       // Определяем состояние приложения в зависимости от роли
       if (userData.role === 'doctor') {
-        setAppState(AppState.DOCTOR_DASHBOARD);
+        setAppState(AppState.DOCTOR_WORKSPACE);
       } else if (userData.role === 'employee') {
-        setAppState(AppState.EMPLOYEE_DASHBOARD);
+        setAppState(AppState.EMPLOYEE_PORTAL);
+      } else if (userData.role === 'registration') {
+        setAppState(AppState.REGISTRATION_DESK);
       } else {
         setAppState(AppState.DASHBOARD);
       }
@@ -204,28 +208,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Если открыта форма 052, показываем её отдельно
-  const path = window.location.pathname;
-  if (path === '/form052' || path.startsWith('/form052/')) {
-    // Загружаем данные из localStorage или URL параметров
-    const savedData = localStorage.getItem('form052_data');
-    const initialData = savedData ? JSON.parse(savedData) : undefined;
-    
-    return (
-      <Form052Editor
-        initialData={initialData}
-        mode="edit"
-        onSave={(data) => {
-          localStorage.setItem('form052_data', JSON.stringify(data));
-          console.log('Данные формы 052 сохранены');
-        }}
-        onPrint={(data) => {
-          console.log('Печать формы 052', data);
-          window.print();
-        }}
-      />
-    );
-  }
 
   return (
     // Conditional styling:
@@ -247,12 +229,16 @@ const App: React.FC = () => {
         <Dashboard />
       )}
       
-      {appState === AppState.DOCTOR_DASHBOARD && currentUser && (
-        <DoctorDashboard currentUser={currentUser} />
+      {appState === AppState.DOCTOR_WORKSPACE && currentUser && (
+        <DoctorWorkspace currentUser={currentUser} />
       )}
       
-      {appState === AppState.EMPLOYEE_DASHBOARD && currentUser && (
-        <EmployeeDashboard currentUser={currentUser} />
+      {appState === AppState.EMPLOYEE_PORTAL && currentUser && (
+        <EmployeePortal currentUser={currentUser} />
+      )}
+      
+      {appState === AppState.REGISTRATION_DESK && currentUser && (
+        <RegistrationDesk currentUser={currentUser} />
       )}
     </div>
   );

@@ -1,4 +1,4 @@
-export type UserRole = 'clinic' | 'organization' | 'doctor' | 'employee';
+export type UserRole = 'clinic' | 'organization' | 'doctor' | 'employee' | 'registration';
 
 export interface UserProfile {
   uid: string;
@@ -33,6 +33,36 @@ export interface Employee {
   status: 'pending' | 'fit' | 'unfit' | 'needs_observation';
   phone?: string;                  // Телефон сотрудника (извлекается из note)
   userId?: string;                  // UID пользователя, если зарегистрирован
+}
+
+// Регистрация посещения сотрудника в клинике
+export interface EmployeeVisit {
+  id: string;
+  employeeId: string;
+  contractId: string;
+  visitDate: string; // Дата посещения
+  checkInTime?: string; // Время регистрации входа
+  checkOutTime?: string; // Время регистрации выхода
+  status: 'registered' | 'in_progress' | 'completed' | 'cancelled'; // Статус прохождения осмотра
+  documentsIssued?: string[]; // Выданные документы (список названий)
+  registeredBy?: string; // ID сотрудника регистратуры
+  notes?: string; // Примечания регистратуры
+}
+
+// Маршрут сотрудника (какие кабинеты он должен посетить)
+export interface EmployeeRoute {
+  employeeId: string;
+  contractId: string;
+  visitId?: string; // ID посещения, если сотрудник зарегистрирован
+  routeItems: Array<{
+    specialty: string; // Специальность врача
+    doctorId?: string; // ID врача (если назначен)
+    doctorName?: string; // Имя врача
+    roomNumber?: string; // Номер кабинета
+    status: 'pending' | 'in_progress' | 'completed' | 'skipped';
+    examinationDate?: string; // Дата и время осмотра
+    order: number; // Порядок посещения
+  }>;
 }
 
 // Амбулаторная карта сотрудника (Форма 052у)
@@ -236,6 +266,7 @@ export enum AppState {
   LANDING = 'LANDING',
   AUTH = 'AUTH',
   DASHBOARD = 'DASHBOARD',
-  DOCTOR_DASHBOARD = 'DOCTOR_DASHBOARD',
-  EMPLOYEE_DASHBOARD = 'EMPLOYEE_DASHBOARD',
+  DOCTOR_WORKSPACE = 'DOCTOR_WORKSPACE',
+  EMPLOYEE_PORTAL = 'EMPLOYEE_PORTAL',
+  REGISTRATION_DESK = 'REGISTRATION_DESK',
 }
