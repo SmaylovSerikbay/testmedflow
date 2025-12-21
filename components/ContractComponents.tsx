@@ -10,7 +10,8 @@ import {
   generateOrganizationRouteSheetPDF, 
   generateCommissionOrderPDF,
   generateFinalActPDF,
-  generateHealthPlanPDF
+  generateHealthPlanPDF,
+  generateSummaryReportPDF
 } from '../utils/pdfGenerator';
 
 // --- RESEARCH PARSING UTILITIES ---
@@ -1161,6 +1162,14 @@ ${obsList}
           date 
         });
       }
+      if (!existingDocs.find(d => d.type === 'summary_report')) {
+        newDocs.push({ 
+          id: 'summary_' + Date.now(), 
+          type: 'summary_report', 
+          title: 'Сводный отчет (Приложение 2)', 
+          date 
+        });
+      }
 
       await updateContract(contract.id, {
         finalActContent: reportForm.finalAct,
@@ -1395,6 +1404,10 @@ ${obsList}
             pdfDoc = generateHealthPlanPDF(contract, employees);
             filename = `План_оздоровления_${contract.number}.pdf`;
             break;
+          case 'summary_report':
+            pdfDoc = generateSummaryReportPDF(contract, employees);
+            filename = `Сводный_отчет_${contract.number}.pdf`;
+            break;
           default:
             showToast('error', 'Неизвестный тип документа');
             return;
@@ -1591,6 +1604,7 @@ ${obsList}
     switch (type) {
       case 'final_act':
       case 'health_plan':
+      case 'summary_report':
         return <FileTextIcon className="w-4 h-4" />;
       case 'route_sheet':
         return <FileSignatureIcon className="w-4 h-4" />;
@@ -2034,6 +2048,22 @@ const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                 ) : (
                   <p>Нет сотрудников, требующих оздоровительных мероприятий.</p>
                 )}
+              </div>
+            </div>
+          )}
+          {doc.type === 'summary_report' && (
+            <div className="text-sm space-y-3">
+              <h2 className="text-2xl font-bold text-center mb-4">СВОДНЫЙ ОТЧЕТ</h2>
+              <p className="text-center mb-4">
+                о результатах проведенного периодического медицинского осмотра (Приложение 2)
+              </p>
+              <div className="space-y-2">
+                <p>I. Общие сведения</p>
+                <p>1. Медицинская организация: {contract.clinicName}</p>
+                <p>2. Организация: {contract.clientName}</p>
+                <p>...</p>
+                <p>II. Подлежит осмотру всего: {employees.length}</p>
+                <p>III. Осмотрено всего: {employees.filter(e => e.status !== 'pending').length}</p>
               </div>
             </div>
           )}

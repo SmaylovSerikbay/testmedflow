@@ -35,6 +35,15 @@ export interface Employee {
   userId?: string;                  // UID пользователя, если зарегистрирован
 }
 
+// Группы здоровья согласно п. 21 Приказа
+export type HealthGroup = 
+  | '1' // здоровые работники
+  | '2' // практически здоровые (нестойкие изменения)
+  | '3' // начальные формы общих заболеваний
+  | '4' // выраженные формы общих заболеваний
+  | '5' // признаки воздействия вредных факторов
+  | '6'; // признаки профессиональных заболеваний
+
 // Амбулаторная карта сотрудника (Форма 052у)
 export interface AmbulatoryCard {
   employeeId: string;
@@ -95,6 +104,7 @@ export interface AmbulatoryCard {
   // Общее заключение комиссии
   finalConclusion?: {
     status: 'fit' | 'unfit' | 'needs_observation';
+    healthGroup?: HealthGroup; // Группа здоровья (п. 21)
     date: string;
     doctorId: string; // ID председателя комиссии
     doctorName?: string;
@@ -170,7 +180,7 @@ export interface CalendarPlan {
 
 export interface ContractDocument {
   id: string;
-  type: 'contract' | 'order' | 'route_sheet' | 'final_act' | 'health_plan';
+  type: 'contract' | 'order' | 'route_sheet' | 'final_act' | 'health_plan' | 'summary_report' | 'emergency_notification';
   title: string;
   date: string;
   url?: string;

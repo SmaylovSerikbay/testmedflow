@@ -25,6 +25,7 @@ const FinalConclusionModal: React.FC<FinalConclusionModalProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [form, setForm] = useState({
     status: card.finalConclusion?.status || 'fit' as 'fit' | 'unfit' | 'needs_observation',
+    healthGroup: card.finalConclusion?.healthGroup || '',
     diagnosis: card.finalConclusion?.diagnosis || '',
     recommendations: card.finalConclusion?.recommendations || '',
     restrictions: card.finalConclusion?.restrictions || '',
@@ -49,6 +50,7 @@ const FinalConclusionModal: React.FC<FinalConclusionModalProps> = ({
         ...card,
         finalConclusion: {
           status: form.status,
+          healthGroup: form.healthGroup as any,
           date: new Date().toISOString(),
           doctorId,
           doctorName,
@@ -144,7 +146,7 @@ const FinalConclusionModal: React.FC<FinalConclusionModalProps> = ({
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">
-                Статус <span className="text-red-500">*</span>
+                Статус пригодности <span className="text-red-500">*</span>
               </label>
               <select
                 value={form.status}
@@ -153,8 +155,28 @@ const FinalConclusionModal: React.FC<FinalConclusionModalProps> = ({
                 disabled={!allExamsCompleted}
               >
                 <option value="fit">Годен к работе</option>
-                <option value="unfit">Не годен к работе</option>
-                <option value="needs_observation">Требуется наблюдение</option>
+                <option value="unfit">Не годен к работе (Противопоказания)</option>
+                <option value="needs_observation">Требуется дообследование/наблюдение</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                Группа здоровья (согласно п. 21 Приказа) <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={form.healthGroup}
+                onChange={(e) => setForm({ ...form, healthGroup: e.target.value })}
+                className="w-full px-4 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                disabled={!allExamsCompleted}
+              >
+                <option value="">Выберите группу...</option>
+                <option value="1">1. Здоровые работники (не нуждаются в реабилитации)</option>
+                <option value="2">2. Практически здоровые (нестойкие функциональные изменения)</option>
+                <option value="3">3. Имеющие начальные формы общих заболеваний</option>
+                <option value="4">4. Имеющие выраженные формы общих заболеваний</option>
+                <option value="5">5. Имеющие признаки воздействия вредных факторов</option>
+                <option value="6">6. Имеющие признаки профессиональных заболеваний</option>
               </select>
             </div>
 
