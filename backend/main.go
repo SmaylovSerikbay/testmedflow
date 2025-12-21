@@ -67,6 +67,7 @@ type Contract struct {
 	Price            float64        `json:"price"`
 	PlannedHeadcount int            `json:"plannedHeadcount"`
 	Employees        any            `json:"employees,omitempty"`
+	Doctors          []Doctor       `json:"doctors,omitempty"`
 	Documents        any            `json:"documents,omitempty"`
 	CalendarPlan     *CalendarPlan  `json:"calendarPlan,omitempty"`
 	ClientSignOTP    *string        `json:"clientSignOtp,omitempty"`
@@ -222,6 +223,7 @@ CREATE TABLE IF NOT EXISTS contracts (
   price             DOUBLE PRECISION NOT NULL,
   planned_headcount INTEGER NOT NULL,
   employees         JSONB,
+  doctors           JSONB,
   documents         JSONB,
   calendar_plan     JSONB,
   client_sign_otp   TEXT,
@@ -495,7 +497,7 @@ func listContractsHandler(w http.ResponseWriter, r *http.Request) {
 SELECT id, number, client_name, client_bin, client_signed,
        clinic_name, clinic_bin, clinic_signed,
        date, status, price, planned_headcount,
-       employees, documents, calendar_plan, client_sign_otp, clinic_sign_otp
+       employees, doctors, documents, calendar_plan, client_sign_otp, clinic_sign_otp
 FROM contracts
 WHERE client_bin = $1 OR clinic_bin = $1
 ORDER BY date DESC, id DESC
@@ -511,13 +513,13 @@ ORDER BY date DESC, id DESC
 	for rows.Next() {
 		var c Contract
 		var date time.Time
-		var employeesJSON, documentsJSON, cpJSON []byte
+		var employeesJSON, doctorsJSON, documentsJSON, cpJSON []byte
 		if err := rows.Scan(
 			&c.ID, &c.Number,
 			&c.ClientName, &c.ClientBIN, &c.ClientSigned,
 			&c.ClinicName, &c.ClinicBIN, &c.ClinicSigned,
 			&date, &c.Status, &c.Price, &c.PlannedHeadcount,
-			&employeesJSON, &documentsJSON, &cpJSON, &c.ClientSignOTP, &c.ClinicSignOTP,
+			&employeesJSON, &doctorsJSON, &documentsJSON, &cpJSON, &c.ClientSignOTP, &c.ClinicSignOTP,
 		); err != nil {
 			log.Printf("scan contract: %v", err)
 			continue
@@ -525,6 +527,9 @@ ORDER BY date DESC, id DESC
 		c.Date = date.Format("2006-01-02")
 		if len(employeesJSON) > 0 {
 			c.Employees = json.RawMessage(employeesJSON)
+		}
+		if len(doctorsJSON) > 0 {
+			_ = json.Unmarshal(doctorsJSON, &c.Doctors)
 		}
 		if len(documentsJSON) > 0 {
 			c.Documents = json.RawMessage(documentsJSON)
@@ -575,22 +580,23 @@ func createContractHandler(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	var id int64
+	doctorsJSON, _ := json.Marshal(in.Doctors)
 	err := db.QueryRow(ctx, `
 INSERT INTO contracts (
   number, client_name, client_bin, client_signed,
   clinic_name, clinic_bin, clinic_signed,
-  date, status, price, planned_headcount, employees, documents, calendar_plan,
+  date, status, price, planned_headcount, employees, doctors, documents, calendar_plan,
   client_sign_otp, clinic_sign_otp
 ) VALUES (
   $1,$2,$3,false,
   $4,$5,false,
-  $6,$7,$8,$9,$10,$11,$12,
-  $13,$14
+  $6,$7,$8,$9,$10,$11,$12,$13,
+  $14,$15
 ) RETURNING id
 `, in.Number, in.ClientName, in.ClientBIN,
 		in.ClinicName, in.ClinicBIN,
 		in.Date, in.Status, in.Price, in.PlannedHeadcount,
-		in.Employees, in.Documents, nil,
+		in.Employees, doctorsJSON, in.Documents, nil,
 		in.ClientSignOTP, in.ClinicSignOTP,
 	).Scan(&id)
 	if err != nil {
@@ -636,6 +642,13 @@ func updateContractHandler(w http.ResponseWriter, r *http.Request) {
 		_, err = db.Exec(ctx, `UPDATE contracts SET employees = $1 WHERE id = $2`, b, id)
 		if err != nil {
 			log.Printf("update employees: %v", err)
+		}
+	}
+	if v, ok := patch["doctors"]; ok {
+		b, _ := json.Marshal(v)
+		_, err = db.Exec(ctx, `UPDATE contracts SET doctors = $1 WHERE id = $2`, b, id)
+		if err != nil {
+			log.Printf("update doctors: %v", err)
 		}
 	}
 	if v, ok := patch["documents"]; ok {
@@ -702,20 +715,20 @@ func getContractHandler(w http.ResponseWriter, r *http.Request) {
 SELECT id, number, client_name, client_bin, client_signed,
        clinic_name, clinic_bin, clinic_signed,
        date, status, price, planned_headcount,
-       employees, documents, calendar_plan, client_sign_otp, clinic_sign_otp
+       employees, doctors, documents, calendar_plan, client_sign_otp, clinic_sign_otp
 FROM contracts
 WHERE id = $1
 `, id)
 
 	var c Contract
 	var date time.Time
-	var employeesJSON, documentsJSON, cpJSON []byte
+	var employeesJSON, doctorsJSON, documentsJSON, cpJSON []byte
 	if err := row.Scan(
 		&c.ID, &c.Number,
 		&c.ClientName, &c.ClientBIN, &c.ClientSigned,
 		&c.ClinicName, &c.ClinicBIN, &c.ClinicSigned,
 		&date, &c.Status, &c.Price, &c.PlannedHeadcount,
-		&employeesJSON, &documentsJSON, &cpJSON,
+		&employeesJSON, &doctorsJSON, &documentsJSON, &cpJSON,
 		&c.ClientSignOTP, &c.ClinicSignOTP,
 	); err != nil {
 		log.Printf("getContract error: %v", err)
@@ -726,6 +739,9 @@ WHERE id = $1
 	c.Date = date.Format("2006-01-02")
 	if len(employeesJSON) > 0 {
 		c.Employees = json.RawMessage(employeesJSON)
+	}
+	if len(doctorsJSON) > 0 {
+		_ = json.Unmarshal(doctorsJSON, &c.Doctors)
 	}
 	if len(documentsJSON) > 0 {
 		c.Documents = json.RawMessage(documentsJSON)
