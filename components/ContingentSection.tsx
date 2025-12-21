@@ -3,7 +3,7 @@ import { Employee, Contract } from '../types';
 import { parseEmployeeData } from '../services/geminiService';
 import * as XLSX from 'xlsx';
 import { 
-  UsersIcon, PlusIcon, UploadIcon, LoaderIcon, FileTextIcon, TrashIcon, PenIcon
+  UsersIcon, PlusIcon, UploadIcon, LoaderIcon, FileTextIcon, TrashIcon, PenIcon, CheckShieldIcon, FileSignatureIcon
 } from './Icons';
 import EmployeeTableRow from './EmployeeTableRow';
 import ConfirmDialog from './ConfirmDialog';
