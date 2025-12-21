@@ -143,6 +143,8 @@ export interface AmbulatoryCard {
     isFit: boolean;
     restrictions?: string;
     nextExamDate: string;
+    // Классификация работника по п.21 Приказа
+    workerCategory?: 'healthy' | 'practically_healthy' | 'initial_diseases' | 'expressed_diseases' | 'harmful_factors' | 'occupational_diseases';
   };
 
   communication?: {
