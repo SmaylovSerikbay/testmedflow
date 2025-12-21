@@ -9,8 +9,7 @@ import {
   generateOrganizationRouteSheetPDF, 
   generateCommissionOrderPDF,
   generateFinalActPDF,
-  generateHealthPlanPDF,
-  generateEmergencyNotificationPDF
+  generateHealthPlanPDF
 } from '../utils/pdfGenerator';
 import {
   apiListContractsByBin,
@@ -768,8 +767,10 @@ const DoctorDashboard: React.FC<DoctorDashboardProps> = ({ currentUser }) => {
       return;
     }
     
-    const doc = generateEmergencyNotificationPDF(contract, selectedEmployee, examinationForm.diagnosis);
-    doc.save(`Экстренное_извещение_${selectedEmployee.name}.pdf`);
+    // TODO: Реализовать generateEmergencyNotificationPDF
+    alert('Функция генерации экстренного извещения в разработке');
+    // const doc = generateEmergencyNotificationPDF(contract, selectedEmployee, examinationForm.diagnosis);
+    // doc.save(`Экстренное_извещение_${selectedEmployee.name}.pdf`);
   }, [contract, selectedEmployee, examinationForm.diagnosis]);
 
   // Фильтрация и поиск пациентов
