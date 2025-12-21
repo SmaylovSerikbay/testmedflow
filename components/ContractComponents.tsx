@@ -1,6 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { Contract, UserProfile, Employee, ContractDocument, DoctorRouteSheet } from '../types';
-import { createRouteSheetsForAllDoctors, createRouteSheetsForAllSpecialties } from '../utils/routeSheetGenerator';
+import { Contract, UserProfile, Employee, ContractDocument } from '../types';
 import { LoaderIcon, PenIcon, CalendarIcon, CheckShieldIcon, FileTextIcon, FileSignatureIcon, UserMdIcon } from './Icons';
 import { FACTOR_RULES, FactorRule } from '../factorRules';
 import html2canvas from 'html2canvas';
@@ -474,19 +473,7 @@ export const CalendarPlanSection: React.FC<CalendarPlanSectionProps> = ({
         doctors: contractDoctors, // Сохраняем врачей в договоре
       });
 
-      // Создаем маршрутные листы для всех необходимых специализаций (включая отсутствующих врачей)
-      if (employees.length > 0) {
-        try {
-          console.log('Creating route sheets for all required specialties...');
-          await createRouteSheetsForAllSpecialties(contract.id, employees, contractDoctors);
-          console.log('Route sheets created for all required specialties');
-        } catch (error) {
-          console.error('Error creating route sheets:', error);
-          // Не показываем ошибку пользователю, так как основная операция прошла успешно
-        }
-      } else {
-        console.log('No employees available for route sheet creation');
-      }
+      // Маршрутные листы удалены из системы
 
       setIsApproveModalOpen(false);
       showToast('success', 'План утверждён. Маршрутные листы и приказ сформированы.');

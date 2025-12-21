@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx';
 import { parseEmployeeData } from '../services/geminiService';
 import { sendWhatsAppMessage, generateOTP } from '../services/greenApi';
 import { apiListContractsByBin, apiUpdateContract, apiListDoctors, apiGetUserByPhone, apiCreateUser, ApiContract, ApiDoctor } from '../services/api';
+import { websocketService, WebSocketMessage } from '../services/websocketService';
 import BrandLogo from './BrandLogo';
 import { 
   UploadIcon, LoaderIcon, SparklesIcon, LogoIcon, 
@@ -397,6 +398,41 @@ const Dashboard: React.FC = () => {
 
   const { toast, showToast } = useToast();
 
+  // WebSocket подключение и обработка событий
+  useEffect(() => {
+    if (!currentUser || isLoadingProfile) {
+      return;
+    }
+
+    // Подключаемся к WebSocket
+    websocketService.connect(currentUser.uid);
+
+    // Обработка событий контрактов
+    const unsubscribeContractUpdated = websocketService.on('contract_updated', (message: WebSocketMessage) => {
+      const data = message.data as any;
+      if (data?.contractId) {
+        // Обновляем список контрактов при изменении
+        refetchContracts();
+        showToast('info', 'Договор обновлен');
+      }
+    });
+
+    const unsubscribeContractCreated = websocketService.on('contract_created', (message: WebSocketMessage) => {
+      const data = message.data as any;
+      if (data?.contractId) {
+        refetchContracts();
+        showToast('success', 'Новый договор создан');
+      }
+    });
+
+    // Отписка при размонтировании
+    return () => {
+      unsubscribeContractUpdated();
+      unsubscribeContractCreated();
+      websocketService.disconnect();
+    };
+  }, [currentUser, isLoadingProfile, refetchContracts, showToast]);
+
   // --- GLOBAL STATE ---
   const [activeSidebarItem, setActiveSidebarItem] = useState('contracts');
   const [selectedContractId, setSelectedContractId] = useState<string | null>(null);
@@ -434,6 +470,31 @@ const Dashboard: React.FC = () => {
   }, [selectedContract]);
 
   const { doctors, refetchDoctors } = useDoctors(currentUser, selectedContract);
+
+  // WebSocket обработка событий врачей с refetchDoctors
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== 'clinic' || isLoadingProfile) {
+      return;
+    }
+
+    const unsubscribeDoctorCreated = websocketService.on('doctor_created', () => {
+      refetchDoctors();
+    });
+
+    const unsubscribeDoctorUpdated = websocketService.on('doctor_updated', () => {
+      refetchDoctors();
+    });
+
+    const unsubscribeDoctorDeleted = websocketService.on('doctor_deleted', () => {
+      refetchDoctors();
+    });
+
+    return () => {
+      unsubscribeDoctorCreated();
+      unsubscribeDoctorUpdated();
+      unsubscribeDoctorDeleted();
+    };
+  }, [currentUser, isLoadingProfile, refetchDoctors]);
 
   const employees = useMemo(() => {
     return selectedContract?.employees || [];

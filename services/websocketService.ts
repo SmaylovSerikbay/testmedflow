@@ -9,6 +9,11 @@ export type WebSocketEventType =
   | 'examination_completed'
   | 'route_sheet_updated'
   | 'card_updated'
+  | 'contract_created'
+  | 'contract_updated'
+  | 'doctor_created'
+  | 'doctor_updated'
+  | 'doctor_deleted'
   | 'user_connected'
   | 'user_disconnected';
 
@@ -43,7 +48,7 @@ class WebSocketService {
     this.isConnecting = true;
 
     // Используем wss:// для продакшена, ws:// для разработки
-    const url = wsUrl || this.getWebSocketUrl();
+    const url = wsUrl || this.getWebSocketUrl(userId);
 
     try {
       this.ws = new WebSocket(url);
@@ -183,16 +188,24 @@ class WebSocketService {
   /**
    * Получение URL WebSocket сервера
    */
-  private getWebSocketUrl(): string {
+  private getWebSocketUrl(userId?: string): string {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
     
     // Для разработки используем localhost:8080
+    let baseUrl: string;
     if (host.includes('localhost') || host.includes('127.0.0.1')) {
-      return `ws://localhost:8080/ws`;
+      baseUrl = `ws://localhost:8080/ws`;
+    } else {
+      baseUrl = `${protocol}//${host}/ws`;
     }
-
-    return `${protocol}//${host}/ws`;
+    
+    // Добавляем userId в query параметры
+    if (userId) {
+      return `${baseUrl}?userId=${encodeURIComponent(userId)}`;
+    }
+    
+    return baseUrl;
   }
 
   /**

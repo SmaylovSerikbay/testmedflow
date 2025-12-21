@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { UserRole } from '../types';
 import BrandLogo from './BrandLogo';
 import { sendWhatsAppMessage, generateOTP } from '../services/greenApi';
-import { apiGetUserByPhone, apiCreateUser } from '../services/api';
+import { apiGetUserByPhone, apiGetUserByBin, apiCreateUser } from '../services/api';
 
 interface AuthModalProps {
   onSuccess: () => void;
@@ -176,16 +176,33 @@ const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
     }
 
     setLoading(true);
+    setError('');
     
     try {
+        const cleanPhone = phone.replace(/\D/g, '');
+
+        // Проверка на занятость БИН
+        const existingByBin = await apiGetUserByBin(cleanBin);
+        if (existingByBin) {
+          setError(`БИН ${cleanBin} уже зарегистрирован в системе. Используйте другой БИН или войдите с существующим аккаунтом.`);
+          setLoading(false);
+          return;
+        }
+
+        // Проверка на занятость телефона (дополнительная проверка)
+        const existingByPhone = await apiGetUserByPhone(cleanPhone);
+        if (existingByPhone) {
+          setError(`Номер телефона ${phone} уже зарегистрирован. Войдите с этим номером или используйте другой.`);
+          setLoading(false);
+          return;
+        }
+
         // UID уже сохранен после проверки OTP
         let uid = localStorage.getItem('medwork_uid');
         if (!uid) {
           uid = 'user_' + Date.now();
           localStorage.setItem('medwork_uid', uid);
         }
-        
-        const cleanPhone = phone.replace(/\D/g, '');
 
         const userData = {
           uid,
@@ -211,14 +228,13 @@ const AuthModal: React.FC<AuthModalProps> = ({ onSuccess }) => {
         if (import.meta.env.DEV) {
           console.error("Registration Error:", err);
         }
-        // Если пользователь уже существует (дубликат), это не ошибка - просто входим
+        // Если пользователь уже существует (дубликат), показываем понятное сообщение
         if (err?.message?.includes('duplicate') || err?.message?.includes('23505')) {
-          // Пользователь уже создан, просто входим
+          setError('Этот БИН или номер телефона уже зарегистрирован в системе. Войдите с существующим аккаунтом.');
           setLoading(false);
-          onSuccess();
           return;
         }
-        setError("Не удалось создать аккаунт. Проверьте интернет.");
+        setError("Не удалось создать аккаунт. Проверьте интернет и попробуйте еще раз.");
         setLoading(false);
     }
   };

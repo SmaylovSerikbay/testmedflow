@@ -2,9 +2,6 @@ import React, { useState, useEffect } from 'react';
 import LandingPage from './components/LandingPage';
 import AuthModal from './components/AuthModal';
 import Dashboard from './components/Dashboard';
-import DoctorWorkspace from './components/DoctorWorkspace';
-import EmployeePortal from './components/EmployeePortal';
-import RegistrationDesk from './components/RegistrationDesk';
 import { AppState, UserProfile } from './types';
 import { apiGetUserByPhone, apiCreateUser } from './services/api';
 
@@ -12,23 +9,9 @@ const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>(AppState.LANDING);
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [isCheckingUser, setIsCheckingUser] = useState(true);
-  
-  // Проверяем URL для формы 052
-  useEffect(() => {
-    const path = window.location.pathname;
-    if (path === '/form052' || path.startsWith('/form052/')) {
-      // Не проверяем пользователя для формы 052 - она доступна отдельно
-      setIsCheckingUser(false);
-    }
-  }, []);
 
   // Проверяем существование пользователя при загрузке
   useEffect(() => {
-    // Пропускаем проверку для формы 052
-    if (window.location.pathname === '/form052' || window.location.pathname.startsWith('/form052/')) {
-      return;
-    }
-    
     const checkUser = async () => {
       const phone = localStorage.getItem('medwork_phone');
       if (!phone) {
@@ -40,9 +23,6 @@ const App: React.FC = () => {
         // Проверка существования пользователя через Go API
         const apiUser = await apiGetUserByPhone(phone);
         if (apiUser) {
-          // Для врачей: если нет clinicBin, но есть bin, используем его
-          const clinicBin = apiUser.clinicBin || (apiUser.role === 'doctor' ? apiUser.bin : undefined);
-          
           const userData: UserProfile = {
             uid: apiUser.uid,
             role: apiUser.role,
@@ -51,49 +31,16 @@ const App: React.FC = () => {
             leaderName: apiUser.leaderName,
             phone: apiUser.phone,
             createdAt: apiUser.createdAt || new Date().toISOString(),
-            // Загружаем дополнительные поля для врачей
             doctorId: apiUser.doctorId,
             clinicId: apiUser.clinicId,
             specialty: apiUser.specialty,
-            clinicBin: clinicBin,
-            // Для сотрудников
+            clinicBin: apiUser.clinicBin,
             employeeId: apiUser.employeeId,
             contractId: apiUser.contractId,
           };
           
-          // Если у врача или регистратора нет clinicBin, но есть bin, обновляем пользователя в базе
-          if ((apiUser.role === 'doctor' || apiUser.role === 'registration') && !apiUser.clinicBin && apiUser.bin) {
-            try {
-              await apiCreateUser({
-                uid: apiUser.uid,
-                role: apiUser.role,
-                phone: apiUser.phone,
-                bin: apiUser.bin,
-                companyName: apiUser.companyName,
-                leaderName: apiUser.leaderName,
-                doctorId: apiUser.doctorId,
-                clinicId: apiUser.clinicId,
-                specialty: apiUser.specialty,
-                clinicBin: apiUser.bin, // Используем bin как clinicBin
-                createdAt: apiUser.createdAt,
-              } as any);
-            } catch (error) {
-              console.error('Error updating doctor/registration clinicBin:', error);
-            }
-          }
-          
           setCurrentUser(userData);
-          
-          // Определяем состояние приложения в зависимости от роли
-          if (userData.role === 'doctor') {
-            setAppState(AppState.DOCTOR_WORKSPACE);
-          } else if (userData.role === 'employee') {
-            setAppState(AppState.EMPLOYEE_PORTAL);
-          } else if (userData.role === 'registration') {
-            setAppState(AppState.REGISTRATION_DESK);
-          } else {
-            setAppState(AppState.DASHBOARD);
-          }
+          setAppState(AppState.DASHBOARD);
         } else {
           // Пользователь не найден - очищаем localStorage и показываем форму авторизации
           console.warn('User not found in database, phone:', phone);
@@ -145,60 +92,28 @@ const App: React.FC = () => {
         return;
       }
       
-      // Для врачей и регистраторов: если нет clinicBin, но есть bin, используем его
-      const clinicBin = apiUser.clinicBin || ((apiUser.role === 'doctor' || apiUser.role === 'registration') ? apiUser.bin : undefined);
-      
-      const userData: UserProfile = {
-        uid: apiUser.uid,
-        role: apiUser.role,
-        bin: apiUser.bin,
-        companyName: apiUser.companyName,
-        leaderName: apiUser.leaderName,
-        phone: apiUser.phone,
-        createdAt: apiUser.createdAt || new Date().toISOString(),
-        // Загружаем дополнительные поля для врачей
-        doctorId: apiUser.doctorId,
-        clinicId: apiUser.clinicId,
-        specialty: apiUser.specialty,
-        clinicBin: clinicBin,
-        // Для сотрудников
-        employeeId: apiUser.employeeId,
-        contractId: apiUser.contractId,
-      };
-      
-      // Если у врача или регистратора нет clinicBin, но есть bin, обновляем пользователя в базе
-      if ((apiUser.role === 'doctor' || apiUser.role === 'registration') && !apiUser.clinicBin && apiUser.bin) {
-        try {
-          await apiCreateUser({
+          const userData: UserProfile = {
             uid: apiUser.uid,
             role: apiUser.role,
-            phone: apiUser.phone,
             bin: apiUser.bin,
             companyName: apiUser.companyName,
             leaderName: apiUser.leaderName,
+            phone: apiUser.phone,
+            createdAt: apiUser.createdAt || new Date().toISOString(),
+            // Загружаем дополнительные поля для врачей
             doctorId: apiUser.doctorId,
             clinicId: apiUser.clinicId,
             specialty: apiUser.specialty,
-            clinicBin: apiUser.bin, // Используем bin как clinicBin
-            createdAt: apiUser.createdAt,
-          } as any);
-        } catch (error) {
-          console.error('Error updating doctor/registration clinicBin:', error);
-        }
-      }
-      
-      setCurrentUser(userData);
-      
-      // Определяем состояние приложения в зависимости от роли
-      if (userData.role === 'doctor') {
-        setAppState(AppState.DOCTOR_WORKSPACE);
-      } else if (userData.role === 'employee') {
-        setAppState(AppState.EMPLOYEE_PORTAL);
-      } else if (userData.role === 'registration') {
-        setAppState(AppState.REGISTRATION_DESK);
-      } else {
-        setAppState(AppState.DASHBOARD);
-      }
+            clinicBin: apiUser.clinicBin,
+            // Для сотрудников
+            employeeId: apiUser.employeeId,
+            contractId: apiUser.contractId,
+          };
+          
+          setCurrentUser(userData);
+          
+          // Все пользователи попадают в дашборд
+          setAppState(AppState.DASHBOARD);
     } catch (error: any) {
       console.error("Error loading user after auth:", error);
       // При ошибке очищаем localStorage и показываем форму авторизации
@@ -227,18 +142,6 @@ const App: React.FC = () => {
       
       {appState === AppState.DASHBOARD && (
         <Dashboard />
-      )}
-      
-      {appState === AppState.DOCTOR_WORKSPACE && currentUser && (
-        <DoctorWorkspace currentUser={currentUser} />
-      )}
-      
-      {appState === AppState.EMPLOYEE_PORTAL && currentUser && (
-        <EmployeePortal currentUser={currentUser} />
-      )}
-      
-      {appState === AppState.REGISTRATION_DESK && currentUser && (
-        <RegistrationDesk currentUser={currentUser} />
       )}
     </div>
   );

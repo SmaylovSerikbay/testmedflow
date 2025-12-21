@@ -12,7 +12,6 @@ import ContingentSection from './ContingentSection';
 import { SigningControls, CommercialTermsCard, CalendarPlanSection, DocumentsSection } from './ContractComponents';
 import HarmfulFactorModal from './HarmfulFactorModal';
 import ConfirmDialog from './ConfirmDialog';
-import { processEmployeesForAutoRegistration } from '../utils/employeeRegistration';
 
 interface ContractWorkspaceProps {
   currentUser: UserProfile | null;
@@ -111,15 +110,11 @@ const ContractWorkspace: React.FC<ContractWorkspaceProps> = ({
   const handleSaveEmployee = useCallback(async (employee: Employee) => {
     const exists = employees.some(emp => emp.id === employee.id);
     
-    // Проверяем, есть ли телефон в примечании для автоматической регистрации
-    const employeesToProcess = exists
+    const updatedEmployees = exists
       ? employees.map(emp => emp.id === employee.id ? employee : emp)
       : [...employees, employee];
     
-    const processedEmployees = await processEmployeesForAutoRegistration(employeesToProcess, contract.id);
-    const wasRegistered = processedEmployees.find(e => e.id === employee.id)?.userId && !employee.userId;
-    
-    await updateContract(contract.id, { employees: processedEmployees });
+    await updateContract(contract.id, { employees: updatedEmployees });
     
     // Закрываем модальное окно и очищаем состояние
     setIsEmployeeModalOpen(false);
@@ -128,11 +123,7 @@ const ContractWorkspace: React.FC<ContractWorkspaceProps> = ({
       setEditingEmployee(null);
     }, 100);
     
-    if (wasRegistered) {
-      showToast('success', exists ? 'Сотрудник обновлен и зарегистрирован' : 'Сотрудник добавлен и зарегистрирован');
-    } else {
-      showToast('success', exists ? 'Сотрудник обновлен' : 'Сотрудник добавлен');
-    }
+    showToast('success', exists ? 'Сотрудник обновлен' : 'Сотрудник добавлен');
   }, [employees, contract.id, updateContract, showToast]);
 
   const handleDeleteEmployee = useCallback((employeeId: string) => {

@@ -7,7 +7,6 @@ import {
 } from './Icons';
 import EmployeeTableRow from './EmployeeTableRow';
 import ConfirmDialog from './ConfirmDialog';
-import { processEmployeesForAutoRegistration, extractPhoneFromNote } from '../utils/employeeRegistration';
 
 interface ContingentSectionProps {
   employees: Employee[];
@@ -75,21 +74,13 @@ const ContingentSection: React.FC<ContingentSectionProps> = ({
       const existing = employees || [];
       const allEmployees = existing.concat(newEmployees);
       
-      // Автоматическая регистрация сотрудников с телефонами в примечании
       setIsProcessing(true);
-      const processedEmployees = await processEmployeesForAutoRegistration(allEmployees, contractId);
-      const registeredCount = processedEmployees.filter(e => e.userId).length - existing.filter(e => e.userId).length;
-
       await updateContract(contractId, { 
-        employees: processedEmployees,
+        employees: allEmployees,
         status: 'negotiation'
       });
       setRawText('');
-      if (registeredCount > 0) {
-        showToast('success', `Добавлено ${newEmployees.length} сотрудников. Автоматически зарегистрировано ${registeredCount} сотрудников.`);
-      } else {
-        showToast('success', `Добавлено ${newEmployees.length} сотрудников`);
-      }
+      showToast('success', `Добавлено ${newEmployees.length} сотрудников`);
     } catch (e) {
       showToast('error', 'Ошибка обработки списка сотрудников.');
     } finally {
@@ -649,20 +640,12 @@ const ContingentSection: React.FC<ContingentSectionProps> = ({
       const existing = employees || [];
       const allEmployees = existing.concat(newEmployees);
       
-      // Автоматическая регистрация сотрудников с телефонами в примечании
-      const processedEmployees = await processEmployeesForAutoRegistration(allEmployees, contractId);
-      const registeredCount = processedEmployees.filter(e => e.userId).length - existing.filter(e => e.userId).length;
-
       await updateContract(contractId, { 
-        employees: processedEmployees,
+        employees: allEmployees,
         status: 'negotiation'
       });
 
-      if (registeredCount > 0) {
-        showToast('success', `Загружено ${newEmployees.length} сотрудников из файла. Автоматически зарегистрировано ${registeredCount} сотрудников.`);
-      } else {
-        showToast('success', `Загружено ${newEmployees.length} сотрудников из файла`);
-      }
+      showToast('success', `Загружено ${newEmployees.length} сотрудников из файла`);
     } catch (error) {
       console.error('File processing error:', error);
       setFileError('Ошибка обработки файла. Проверьте формат.');
