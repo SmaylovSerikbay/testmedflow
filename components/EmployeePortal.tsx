@@ -10,6 +10,7 @@ import {
   UserMdIcon,
   AlertCircleIcon
 } from './Icons';
+import BrandLogo from './BrandLogo';
 import AmbulatoryCardView from './AmbulatoryCardView';
 import {
   apiGetContract,
@@ -189,28 +190,66 @@ const EmployeePortal: React.FC<EmployeePortalProps> = ({ currentUser }) => {
     );
   }
 
+  // Статистика осмотров
+  const examinationStats = {
+    total: employeeRoute?.routeItems.length || 0,
+    completed: employeeRoute?.routeItems.filter(r => r.status === 'completed').length || 0,
+    pending: employeeRoute?.routeItems.filter(r => r.status === 'pending').length || 0,
+  };
+
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* Header */}
-      <div className="bg-white border-b border-slate-200 sticky top-0 z-10">
-        <div className="max-w-5xl mx-auto px-6 py-4">
+      {/* Header - унифицированный стиль */}
+      <header className="bg-white border-b border-slate-200 sticky top-0 z-30">
+        <div className="px-6 py-3">
           <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-slate-900">Моя амбулаторная карта</h1>
-              <p className="text-sm text-slate-600 mt-1">
-                {employee.name} • {employee.position}
-              </p>
+            {/* Left: Logo and Info */}
+            <div className="flex items-center gap-6">
+              <div className="flex items-center">
+                <BrandLogo size="sm" />
+              </div>
+              
+              <div className="hidden md:flex items-center gap-3 pl-6 border-l border-slate-200">
+                <div className="flex flex-col">
+                  <span className="text-sm font-semibold text-slate-900">
+                    Моя амбулаторная карта
+                  </span>
+                  <span className="text-[10px] text-slate-500 uppercase">
+                    {employee.name}
+                  </span>
+                </div>
+              </div>
             </div>
+
+            {/* Center: Stats */}
+            {employeeRoute && employeeRoute.routeItems.length > 0 && (
+              <div className="hidden lg:flex items-center gap-4">
+                <div className="px-4 py-2 bg-slate-50 rounded-lg">
+                  <div className="text-xs text-slate-500">Всего осмотров</div>
+                  <div className="text-sm font-bold text-slate-900">{examinationStats.total}</div>
+                </div>
+                <div className="px-4 py-2 bg-amber-50 rounded-lg">
+                  <div className="text-xs text-amber-600">Ожидают</div>
+                  <div className="text-sm font-bold text-amber-700">{examinationStats.pending}</div>
+                </div>
+                <div className="px-4 py-2 bg-green-50 rounded-lg">
+                  <div className="text-xs text-green-600">Пройдено</div>
+                  <div className="text-sm font-bold text-green-700">{examinationStats.completed}</div>
+                </div>
+              </div>
+            )}
+
+            {/* Right: Logout */}
             <button
               onClick={handleLogout}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-all"
+              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-all"
             >
-              <LogoutIcon className="w-4 h-4" />
-              Выход
+              <LogoutIcon className="w-4 h-4"/>
+              <span className="hidden sm:inline">Выход</span>
             </button>
           </div>
         </div>
-      </div>
+      </header>
 
       <div className="max-w-5xl mx-auto px-6 py-8 space-y-6">
         {/* Маршрут осмотра */}

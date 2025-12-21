@@ -9,8 +9,10 @@ import {
   CheckCircleIcon,
   XCircleIcon,
   FileTextIcon,
-  CheckShieldIcon
+  CheckShieldIcon,
+  BriefcaseIcon
 } from './Icons';
+import BrandLogo from './BrandLogo';
 import {
   apiListContractsByBin,
   apiListRouteSheets,
@@ -300,54 +302,113 @@ const DoctorWorkspace: React.FC<DoctorWorkspaceProps> = ({ currentUser }) => {
     );
   }
 
+  // Статистика пациентов
+  const patientsStats = {
+    total: routeSheet?.employees.length || 0,
+    completed: routeSheet?.employees.filter(e => e.status === 'completed').length || 0,
+    pending: routeSheet?.employees.filter(e => e.status === 'pending').length || 0,
+  };
+
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* Header */}
-      <div className="bg-white border-b border-slate-200 sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-6 py-4">
+      {/* Header - унифицированный стиль */}
+      <header className="bg-white border-b border-slate-200 sticky top-0 z-30">
+        <div className="px-6 py-3">
           <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-slate-900">Рабочее место врача</h1>
-              <p className="text-sm text-slate-600 mt-1">
-                {currentUser.specialty || 'Врач'}
-              </p>
+            {/* Left: Logo and Info */}
+            <div className="flex items-center gap-6">
+              <div className="flex items-center">
+                <BrandLogo size="sm" />
+              </div>
+              
+              <div className="hidden md:flex items-center gap-3 pl-6 border-l border-slate-200">
+                <div className="flex flex-col">
+                  <span className="text-sm font-semibold text-slate-900">
+                    Рабочее место врача
+                  </span>
+                  <span className="text-[10px] text-slate-500 uppercase">
+                    {currentUser.specialty || 'Врач'}
+                  </span>
+                </div>
+              </div>
             </div>
+
+            {/* Center: Stats */}
+            {routeSheet && (
+              <div className="hidden lg:flex items-center gap-4">
+                <div className="px-4 py-2 bg-slate-50 rounded-lg">
+                  <div className="text-xs text-slate-500">Всего пациентов</div>
+                  <div className="text-sm font-bold text-slate-900">{patientsStats.total}</div>
+                </div>
+                <div className="px-4 py-2 bg-amber-50 rounded-lg">
+                  <div className="text-xs text-amber-600">Ожидают</div>
+                  <div className="text-sm font-bold text-amber-700">{patientsStats.pending}</div>
+                </div>
+                <div className="px-4 py-2 bg-green-50 rounded-lg">
+                  <div className="text-xs text-green-600">Осмотрено</div>
+                  <div className="text-sm font-bold text-green-700">{patientsStats.completed}</div>
+                </div>
+              </div>
+            )}
+
+            {/* Right: Logout */}
             <button
               onClick={handleLogout}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-all"
+              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-all"
             >
-              <LogoutIcon className="w-4 h-4" />
-              Выход
+              <LogoutIcon className="w-4 h-4"/>
+              <span className="hidden sm:inline">Выход</span>
             </button>
           </div>
         </div>
-      </div>
+      </header>
 
       <div className="max-w-7xl mx-auto px-6 py-6">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Левая панель: Договоры и список сотрудников */}
           <div className="lg:col-span-1 space-y-4">
-            {/* Выбор договора */}
-            <div className="bg-white rounded-xl border border-slate-200 p-4">
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Договор
-              </label>
-              <select
-                value={selectedContract?.id || ''}
-                onChange={(e) => {
-                  const contract = contracts.find(c => c.id === e.target.value);
-                  setSelectedContract(contract || null);
-                  setSelectedEmployee(null);
-                  setAmbulatoryCard(null);
-                }}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {contracts.map(contract => (
-                  <option key={contract.id} value={contract.id}>
-                    {contract.number} - {contract.clientName}
-                  </option>
-                ))}
-              </select>
+            {/* Выбор договора с детальной информацией */}
+            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+              <div className="p-4 border-b border-slate-200 bg-gradient-to-r from-blue-50 to-slate-50">
+                <div className="flex items-center gap-2 mb-3">
+                  <BriefcaseIcon className="w-5 h-5 text-blue-600" />
+                  <label className="text-sm font-semibold text-slate-900">
+                    Договор
+                  </label>
+                </div>
+                <select
+                  value={selectedContract?.id || ''}
+                  onChange={(e) => {
+                    const contract = contracts.find(c => c.id === e.target.value);
+                    setSelectedContract(contract || null);
+                    setSelectedEmployee(null);
+                    setAmbulatoryCard(null);
+                  }}
+                  className="w-full px-3 py-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-medium bg-white"
+                >
+                  {contracts.map(contract => (
+                    <option key={contract.id} value={contract.id}>
+                      {contract.number} - {contract.clientName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              
+              {/* Детальная информация о договоре */}
+              {selectedContract && (
+                <div className="p-4 space-y-3">
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <p className="text-xs text-slate-500 mb-1">Номер</p>
+                      <p className="font-semibold text-slate-900">{selectedContract.number || '—'}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500 mb-1">Клиент</p>
+                      <p className="font-semibold text-slate-900 truncate">{selectedContract.clientName || '—'}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Поиск */}

@@ -13,8 +13,10 @@ import {
   CheckCircleIcon,
   XCircleIcon,
   AlertCircleIcon,
-  XIcon
+  XIcon,
+  BriefcaseIcon
 } from './Icons';
+import BrandLogo from './BrandLogo';
 import {
   apiListContractsByBin,
   apiGetContract,
@@ -508,53 +510,140 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
     );
   }
 
+  // Статистика посещений
+  const visitsStats = {
+    total: visits.length,
+    inProgress: visits.filter(v => v.status === 'in_progress' || v.status === 'registered').length,
+    completed: visits.filter(v => v.status === 'completed').length,
+  };
+
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* Header */}
-      <div className="bg-white border-b border-slate-200 sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-6 py-4">
+      {/* Header - унифицированный стиль с Dashboard */}
+      <header className="bg-white border-b border-slate-200 sticky top-0 z-30">
+        <div className="px-6 py-3">
           <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-slate-900">Регистратура</h1>
-              <p className="text-sm text-slate-600 mt-1">Регистрация сотрудников на медосмотр</p>
+            {/* Left: Logo and Info */}
+            <div className="flex items-center gap-6">
+              <div className="flex items-center">
+                <BrandLogo size="sm" />
+              </div>
+              
+              <div className="hidden md:flex items-center gap-3 pl-6 border-l border-slate-200">
+                <div className="flex flex-col">
+                  <span className="text-sm font-semibold text-slate-900">
+                    Регистратура
+                  </span>
+                  <span className="text-[10px] text-slate-500 uppercase">
+                    {currentUser.clinicName || 'Клиника'}
+                  </span>
+                </div>
+              </div>
             </div>
+
+            {/* Center: Stats */}
+            <div className="hidden lg:flex items-center gap-4">
+              <div className="px-4 py-2 bg-slate-50 rounded-lg">
+                <div className="text-xs text-slate-500">Всего сегодня</div>
+                <div className="text-sm font-bold text-slate-900">{visitsStats.total}</div>
+              </div>
+              <div className="px-4 py-2 bg-blue-50 rounded-lg">
+                <div className="text-xs text-blue-600">В работе</div>
+                <div className="text-sm font-bold text-blue-700">{visitsStats.inProgress}</div>
+              </div>
+              <div className="px-4 py-2 bg-green-50 rounded-lg">
+                <div className="text-xs text-green-600">Завершено</div>
+                <div className="text-sm font-bold text-green-700">{visitsStats.completed}</div>
+              </div>
+            </div>
+
+            {/* Right: Logout */}
             <button
               onClick={handleLogout}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-all"
+              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-all"
             >
-              <LogoutIcon className="w-4 h-4" />
-              Выход
+              <LogoutIcon className="w-4 h-4"/>
+              <span className="hidden sm:inline">Выход</span>
             </button>
           </div>
         </div>
-      </div>
+      </header>
 
       <div className="max-w-7xl mx-auto px-6 py-6">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Левая панель: Выбор договора и список сотрудников */}
           <div className="lg:col-span-1 space-y-4">
-            {/* Выбор договора */}
-            <div className="bg-white rounded-xl border border-slate-200 p-4">
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Договор
-              </label>
-              <select
-                value={selectedContract?.id || ''}
-                onChange={(e) => {
-                  const contract = contracts.find(c => c.id === e.target.value);
-                  setSelectedContract(contract || null);
-                  setSelectedEmployee(null);
-                  setEmployeeVisit(null);
-                  setEmployeeRoute(null);
-                }}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {contracts.map(contract => (
-                  <option key={contract.id} value={contract.id}>
-                    {contract.number} - {contract.clientName}
-                  </option>
-                ))}
-              </select>
+            {/* Выбор договора с детальной информацией */}
+            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+              <div className="p-4 border-b border-slate-200 bg-gradient-to-r from-blue-50 to-slate-50">
+                <div className="flex items-center gap-2 mb-3">
+                  <BriefcaseIcon className="w-5 h-5 text-blue-600" />
+                  <label className="text-sm font-semibold text-slate-900">
+                    Договор
+                  </label>
+                </div>
+                <select
+                  value={selectedContract?.id || ''}
+                  onChange={(e) => {
+                    const contract = contracts.find(c => c.id === e.target.value);
+                    setSelectedContract(contract || null);
+                    setSelectedEmployee(null);
+                    setEmployeeVisit(null);
+                    setEmployeeRoute(null);
+                  }}
+                  className="w-full px-3 py-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-medium bg-white"
+                >
+                  {contracts.map(contract => (
+                    <option key={contract.id} value={contract.id}>
+                      {contract.number} - {contract.clientName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              
+              {/* Детальная информация о договоре */}
+              {selectedContract && (
+                <div className="p-4 space-y-3">
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <p className="text-xs text-slate-500 mb-1">Номер</p>
+                      <p className="font-semibold text-slate-900">{selectedContract.number || '—'}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500 mb-1">Дата</p>
+                      <p className="font-semibold text-slate-900">
+                        {selectedContract.date ? new Date(selectedContract.date).toLocaleDateString('ru-RU') : '—'}
+                      </p>
+                    </div>
+                    <div className="col-span-2">
+                      <p className="text-xs text-slate-500 mb-1">Клиент</p>
+                      <p className="font-semibold text-slate-900 truncate">{selectedContract.clientName || '—'}</p>
+                    </div>
+                    <div className="col-span-2">
+                      <p className="text-xs text-slate-500 mb-1">Сотрудников</p>
+                      <p className="font-semibold text-slate-900">
+                        {selectedContract.employees?.length || 0} / {selectedContract.plannedHeadcount || 0}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="pt-3 border-t border-slate-200">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-slate-500">Статус</span>
+                      <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                        selectedContract.status === 'execution' 
+                          ? 'bg-green-100 text-green-700'
+                          : selectedContract.status === 'planning'
+                          ? 'bg-amber-100 text-amber-700'
+                          : 'bg-slate-100 text-slate-700'
+                      }`}>
+                        {selectedContract.status === 'execution' ? 'Исполнение' : 
+                         selectedContract.status === 'planning' ? 'Планирование' : 
+                         selectedContract.status}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Поиск сотрудника */}
@@ -573,46 +662,71 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
 
             {/* Список сотрудников */}
             <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-              <div className="p-4 border-b border-slate-200">
-                <h2 className="font-semibold text-slate-900">
-                  Сотрудники ({filteredEmployees.length})
-                </h2>
+              <div className="p-4 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-blue-50">
+                <div className="flex items-center justify-between">
+                  <h2 className="font-semibold text-slate-900">
+                    Сотрудники
+                  </h2>
+                  <span className="px-2.5 py-1 bg-white rounded-full text-xs font-bold text-slate-700 border border-slate-200">
+                    {filteredEmployees.length}
+                  </span>
+                </div>
               </div>
               <div className="max-h-[600px] overflow-y-auto">
                 {filteredEmployees.length === 0 ? (
-                  <div className="p-8 text-center text-slate-500">
-                    Сотрудники не найдены
+                  <div className="p-8 text-center">
+                    <UserMdIcon className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                    <p className="text-sm text-slate-500">Сотрудники не найдены</p>
                   </div>
                 ) : (
-                  <div className="divide-y divide-slate-200">
-                    {filteredEmployees.map(employee => (
-                      <button
-                        key={employee.id}
-                        onClick={() => handleCheckIn(employee)}
-                        className={`w-full p-4 text-left hover:bg-slate-50 transition-colors ${
-                          selectedEmployee?.id === employee.id ? 'bg-blue-50 border-l-4 border-blue-500' : ''
-                        }`}
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1 min-w-0">
-                            <p className="font-medium text-slate-900 truncate">{employee.name}</p>
-                            <p className="text-sm text-slate-600 mt-1">{employee.position}</p>
-                            <p className="text-xs text-slate-400 mt-1">ID: {employee.id}</p>
+                  <div className="divide-y divide-slate-100">
+                    {filteredEmployees.map(employee => {
+                      const hasVisit = visits.some(v => v.employeeId === employee.id && v.status !== 'completed');
+                      return (
+                        <button
+                          key={employee.id}
+                          onClick={() => handleCheckIn(employee)}
+                          className={`w-full p-4 text-left hover:bg-slate-50 transition-all ${
+                            selectedEmployee?.id === employee.id 
+                              ? 'bg-blue-50 border-l-4 border-blue-500 shadow-sm' 
+                              : 'hover:border-l-4 hover:border-slate-200'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                <p className="font-semibold text-slate-900 truncate">{employee.name}</p>
+                                {hasVisit && (
+                                  <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[10px] font-bold">
+                                    В работе
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-sm text-slate-600 truncate">{employee.position}</p>
+                              {employee.harmfulFactor && (
+                                <p className="text-xs text-amber-600 mt-1 truncate" title={employee.harmfulFactor}>
+                                  {employee.harmfulFactor}
+                                </p>
+                              )}
+                            </div>
+                            <div className="flex-shrink-0">
+                              {employee.status === 'fit' && (
+                                <CheckCircleIcon className="w-5 h-5 text-green-500" />
+                              )}
+                              {employee.status === 'unfit' && (
+                                <XCircleIcon className="w-5 h-5 text-red-500" />
+                              )}
+                              {employee.status === 'needs_observation' && (
+                                <ClockIcon className="w-5 h-5 text-amber-500" />
+                              )}
+                              {!employee.status && (
+                                <div className="w-5 h-5 rounded-full border-2 border-slate-300" />
+                              )}
+                            </div>
                           </div>
-                          <div className="ml-4 flex-shrink-0">
-                            {employee.status === 'fit' && (
-                              <CheckCircleIcon className="w-5 h-5 text-green-500" />
-                            )}
-                            {employee.status === 'unfit' && (
-                              <XCircleIcon className="w-5 h-5 text-red-500" />
-                            )}
-                            {employee.status === 'needs_observation' && (
-                              <ClockIcon className="w-5 h-5 text-amber-500" />
-                            )}
-                          </div>
-                        </div>
-                      </button>
-                    ))}
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
