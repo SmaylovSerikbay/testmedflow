@@ -258,6 +258,7 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
         contractId: contractIdNum,
         clinicId,
         visitDate: new Date().toISOString().split('T')[0],
+        status: 'registered',
         registeredBy: currentUser.uid,
       });
 
@@ -461,6 +462,7 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
         contractId: undefined, // Индивидуальный пациент
         clinicId,
         visitDate: new Date().toISOString().split('T')[0],
+        status: 'registered',
         registeredBy: currentUser.uid,
         notes: `Индивидуальный пациент: ${patient.fullName}`,
       });
@@ -830,6 +832,7 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
                       Зарегистрировать выход
                     </button>
                   )}
+                  </div>
                 </div>
 
                 {/* Маршрут осмотра */}
