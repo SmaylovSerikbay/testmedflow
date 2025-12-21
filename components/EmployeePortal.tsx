@@ -32,84 +32,113 @@ const EmployeePortal: React.FC<EmployeePortalProps> = ({ currentUser }) => {
   // Загрузка данных
   useEffect(() => {
     const loadData = async () => {
-      if (!currentUser.contractId || !currentUser.employeeId) {
+      if (!currentUser.employeeId) {
         setIsLoading(false);
         return;
       }
 
       try {
-        const contractIdNum = parseInt(currentUser.contractId, 10);
-        if (isNaN(contractIdNum)) {
-          setIsLoading(false);
-          return;
-        }
+        // Если есть contractId - загружаем договор
+        if (currentUser.contractId) {
+          const contractIdNum = parseInt(currentUser.contractId, 10);
+          if (!isNaN(contractIdNum)) {
+            // Загружаем договор
+            const apiContract = await apiGetContract(contractIdNum);
+            if (apiContract) {
+              const contractData: Contract = {
+                id: String(apiContract.id),
+                number: apiContract.number,
+                clientName: apiContract.clientName,
+                clientBin: apiContract.clientBin,
+                clientSigned: apiContract.clientSigned,
+                clinicName: apiContract.clinicName,
+                clinicBin: apiContract.clinicBin,
+                clinicSigned: apiContract.clinicSigned,
+                date: apiContract.date,
+                status: apiContract.status as any,
+                price: apiContract.price,
+                plannedHeadcount: apiContract.plannedHeadcount,
+                employees: apiContract.employees || [],
+                documents: apiContract.documents || [],
+                calendarPlan: apiContract.calendarPlan,
+              };
+              setContract(contractData);
 
-        // Загружаем договор
-        const apiContract = await apiGetContract(contractIdNum);
-        if (!apiContract) {
-          setIsLoading(false);
-          return;
-        }
+              // Находим сотрудника
+              const emp = contractData.employees?.find(e => e.id === currentUser.employeeId);
+              if (emp) {
+                setEmployee(emp);
+              }
 
-        const contractData: Contract = {
-          id: String(apiContract.id),
-          number: apiContract.number,
-          clientName: apiContract.clientName,
-          clientBin: apiContract.clientBin,
-          clientSigned: apiContract.clientSigned,
-          clinicName: apiContract.clinicName,
-          clinicBin: apiContract.clinicBin,
-          clinicSigned: apiContract.clinicSigned,
-          date: apiContract.date,
-          status: apiContract.status as any,
-          price: apiContract.price,
-          plannedHeadcount: apiContract.plannedHeadcount,
-          employees: apiContract.employees || [],
-          documents: apiContract.documents || [],
-          calendarPlan: apiContract.calendarPlan,
-        };
-        setContract(contractData);
+              // Загружаем маршрутные листы
+              const apiSheets = await apiListRouteSheets({ contractId: contractIdNum });
+              
+              // Формируем маршрут сотрудника
+              const routeItems: EmployeeRoute['routeItems'] = [];
+              apiSheets.forEach(sheet => {
+                const empInSheet = sheet.employees.find(e => e.employeeId === currentUser.employeeId);
+                if (empInSheet) {
+                  routeItems.push({
+                    specialty: sheet.specialty || 'Не указано',
+                    doctorId: sheet.virtualDoctor ? undefined : sheet.doctorId,
+                    status: empInSheet.status === 'completed' ? 'completed' : 'pending',
+                    examinationDate: empInSheet.examinationDate,
+                    order: routeItems.length + 1,
+                  });
+                }
+              });
 
-        // Находим сотрудника
-        const emp = contractData.employees?.find(e => e.id === currentUser.employeeId);
-        if (!emp) {
-          setIsLoading(false);
-          return;
-        }
-        setEmployee(emp);
-
-        // Загружаем маршрутные листы
-        const apiSheets = await apiListRouteSheets({ contractId: contractIdNum });
-        
-        // Формируем маршрут сотрудника
-        const routeItems: EmployeeRoute['routeItems'] = [];
-        apiSheets.forEach(sheet => {
-          const empInSheet = sheet.employees.find(e => e.employeeId === currentUser.employeeId);
-          if (empInSheet) {
-            routeItems.push({
-              specialty: sheet.specialty || 'Не указано',
-              doctorId: sheet.virtualDoctor ? undefined : sheet.doctorId,
-              status: empInSheet.status === 'completed' ? 'completed' : 'pending',
-              examinationDate: empInSheet.examinationDate,
-              order: routeItems.length + 1,
-            });
+              if (routeItems.length > 0) {
+                setEmployeeRoute({
+                  employeeId: currentUser.employeeId,
+                  contractId: currentUser.contractId,
+                  routeItems: routeItems.sort((a, b) => a.order - b.order),
+                });
+              }
+            }
           }
-        });
-
-        if (routeItems.length > 0) {
+        } else {
+          // Для индивидуальных пациентов создаем базовый маршрут
           setEmployeeRoute({
             employeeId: currentUser.employeeId,
-            contractId: currentUser.contractId,
-            routeItems: routeItems.sort((a, b) => a.order - b.order),
+            contractId: undefined,
+            routeItems: [
+              {
+                specialty: 'Профпатолог',
+                status: 'pending',
+                order: 1,
+              },
+              {
+                specialty: 'Терапевт',
+                status: 'pending',
+                order: 2,
+              },
+            ],
+          });
+
+          // Создаем базовую информацию о сотруднике для индивидуального пациента
+          setEmployee({
+            id: currentUser.employeeId,
+            name: currentUser.leaderName || 'Индивидуальный пациент',
+            dob: '',
+            gender: 'М',
+            site: '',
+            position: '',
+            harmfulFactor: '',
+            status: 'pending',
           });
         }
 
-        // Загружаем амбулаторную карту
-        const apiCard = await apiGetAmbulatoryCard(currentUser.employeeId, contractIdNum);
+        // Загружаем амбулаторную карту (может быть null contractId для индивидуальных)
+        const contractIdNum = currentUser.contractId ? parseInt(currentUser.contractId, 10) : null;
+        const apiCard = await apiGetAmbulatoryCard(
+          currentUser.employeeId, 
+          !isNaN(contractIdNum as number) ? contractIdNum : null
+        );
         if (apiCard) {
           const card: AmbulatoryCard = {
             employeeId: apiCard.employeeId,
-            contractId: String(apiCard.contractId),
+            contractId: apiCard.contractId ? String(apiCard.contractId) : undefined,
             cardNumber: apiCard.cardNumber,
             personalInfo: apiCard.personalInfo as any,
             anamnesis: apiCard.anamnesis as any,
@@ -146,14 +175,14 @@ const EmployeePortal: React.FC<EmployeePortalProps> = ({ currentUser }) => {
     );
   }
 
-  if (!contract || !employee) {
+  if (!employee) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-slate-50">
         <div className="text-center max-w-md mx-auto px-6">
           <AlertCircleIcon className="w-16 h-16 text-slate-300 mx-auto mb-4" />
           <h2 className="text-xl font-bold text-slate-900 mb-2">Данные не найдены</h2>
           <p className="text-slate-600 mb-4">
-            Не удалось загрузить данные договора или информацию о сотруднике.
+            Не удалось загрузить информацию о пациенте.
           </p>
         </div>
       </div>

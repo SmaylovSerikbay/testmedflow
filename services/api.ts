@@ -288,7 +288,7 @@ export async function apiUpdateRouteSheet(id: number, patch: Partial<ApiRouteShe
 export interface ApiAmbulatoryCard {
   id: number;
   employeeId: string;
-  contractId: number;
+  contractId?: number; // Опциональный для индивидуальных пациентов
   cardNumber?: string;
   personalInfo?: Record<string, any>;
   anamnesis?: Record<string, any>;
@@ -300,9 +300,13 @@ export interface ApiAmbulatoryCard {
   updatedAt: string;
 }
 
-export async function apiGetAmbulatoryCard(employeeId: string, contractId: number): Promise<ApiAmbulatoryCard | null> {
+export async function apiGetAmbulatoryCard(employeeId: string, contractId?: number | null): Promise<ApiAmbulatoryCard | null> {
   try {
-    const data = await request<any>(`/api/ambulatory-cards?employeeId=${encodeURIComponent(employeeId)}&contractId=${contractId}`);
+    let url = `/api/ambulatory-cards?employeeId=${encodeURIComponent(employeeId)}`;
+    if (contractId !== null && contractId !== undefined && !isNaN(contractId)) {
+      url += `&contractId=${contractId}`;
+    }
+    const data = await request<any>(url);
     
     console.log('📥 apiGetAmbulatoryCard - Raw API response:', {
       hasData: !!data,

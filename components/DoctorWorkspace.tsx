@@ -154,7 +154,7 @@ const DoctorWorkspace: React.FC<DoctorWorkspaceProps> = ({ currentUser }) => {
         if (apiCard) {
           const card: AmbulatoryCard = {
             employeeId: apiCard.employeeId,
-            contractId: String(apiCard.contractId),
+            contractId: apiCard.contractId ? String(apiCard.contractId) : undefined,
             cardNumber: apiCard.cardNumber,
             personalInfo: apiCard.personalInfo as any,
             anamnesis: apiCard.anamnesis as any,
