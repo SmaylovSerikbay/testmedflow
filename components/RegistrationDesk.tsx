@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { UserProfile, Contract, Employee, EmployeeVisit, EmployeeRoute, DoctorRouteSheet, IndividualPatient } from '../types';
 import { 
   LoaderIcon, 
@@ -14,7 +14,12 @@ import {
   XCircleIcon,
   AlertCircleIcon,
   XIcon,
-  BriefcaseIcon
+  BriefcaseIcon,
+  FilterIcon,
+  RefreshIcon,
+  DownloadIcon,
+  BellIcon,
+  UsersIcon
 } from './Icons';
 import BrandLogo from './BrandLogo';
 import {
@@ -35,6 +40,14 @@ interface RegistrationDeskProps {
   currentUser: UserProfile;
 }
 
+// Фильтры для удобной работы
+interface FilterOptions {
+  contractStatus: 'all' | 'execution' | 'planning';
+  visitStatus: 'all' | 'registered' | 'in_progress' | 'completed';
+  searchQuery: string;
+  dateFilter: 'today' | 'week' | 'month' | 'all';
+}
+
 const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
@@ -49,60 +62,70 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
   const [visits, setVisits] = useState<EmployeeVisit[]>([]);
   const [showIndividualPatientModal, setShowIndividualPatientModal] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+  
+  // Фильтры
+  const [filters, setFilters] = useState<FilterOptions>({
+    contractStatus: 'all',
+    visitStatus: 'all',
+    searchQuery: '',
+    dateFilter: 'today',
+  });
 
   // Загрузка договоров клиники
+  const loadContracts = useCallback(async () => {
+    if (!currentUser.clinicBin && !currentUser.bin) {
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      const bin = currentUser.clinicBin || currentUser.bin;
+      if (!bin) return;
+
+      const contractsList = await apiListContractsByBin(bin);
+      const contractsData: Contract[] = contractsList.map(c => ({
+        id: String(c.id),
+        number: c.number,
+        clientName: c.clientName,
+        clientBin: c.clientBin,
+        clientSigned: c.clientSigned,
+        clinicName: c.clinicName,
+        clinicBin: c.clinicBin,
+        clinicSigned: c.clinicSigned,
+        date: c.date,
+        status: c.status as any,
+        price: c.price,
+        plannedHeadcount: c.plannedHeadcount,
+        employees: c.employees || [],
+        documents: c.documents || [],
+        calendarPlan: c.calendarPlan,
+      }));
+      
+      // Показываем все договоры, кроме черновиков
+      const activeContracts = contractsData.filter(c => 
+        c.status === 'execution' || 
+        c.status === 'planning' || 
+        c.status === 'negotiation' ||
+        c.status === 'request'
+      );
+      setContracts(activeContracts);
+      if (activeContracts.length > 0 && !selectedContract) {
+        const executionContract = activeContracts.find(c => c.status === 'execution');
+        setSelectedContract(executionContract || activeContracts[0]);
+      }
+      setLastUpdate(new Date());
+    } catch (error) {
+      console.error('Error loading contracts:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [currentUser, selectedContract]);
+
   useEffect(() => {
-    const loadContracts = async () => {
-      if (!currentUser.clinicBin && !currentUser.bin) {
-        setIsLoading(false);
-        return;
-      }
-
-      try {
-        const bin = currentUser.clinicBin || currentUser.bin;
-        if (!bin) return;
-
-        const contractsList = await apiListContractsByBin(bin);
-        const contractsData: Contract[] = contractsList.map(c => ({
-          id: String(c.id),
-          number: c.number,
-          clientName: c.clientName,
-          clientBin: c.clientBin,
-          clientSigned: c.clientSigned,
-          clinicName: c.clinicName,
-          clinicBin: c.clinicBin,
-          clinicSigned: c.clinicSigned,
-          date: c.date,
-          status: c.status as any,
-          price: c.price,
-          plannedHeadcount: c.plannedHeadcount,
-          employees: c.employees || [],
-          documents: c.documents || [],
-          calendarPlan: c.calendarPlan,
-        }));
-        
-        // Показываем все договоры, кроме черновиков
-        const activeContracts = contractsData.filter(c => 
-          c.status === 'execution' || 
-          c.status === 'planning' || 
-          c.status === 'negotiation' ||
-          c.status === 'request'
-        );
-        setContracts(activeContracts);
-        if (activeContracts.length > 0 && !selectedContract) {
-          // Выбираем договор в статусе исполнения, если есть, иначе первый
-          const executionContract = activeContracts.find(c => c.status === 'execution');
-          setSelectedContract(executionContract || activeContracts[0]);
-        }
-      } catch (error) {
-        console.error('Error loading contracts:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
     loadContracts();
-  }, [currentUser]);
+  }, []);
 
   // Загрузка врачей клиники
   useEffect(() => {
@@ -122,97 +145,108 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
   }, [currentUser]);
 
   // Загрузка маршрутных листов для выбранного договора
-  useEffect(() => {
-    const loadRouteSheets = async () => {
-      if (!selectedContract) return;
+  const loadRouteSheets = useCallback(async () => {
+    if (!selectedContract) return;
 
-      try {
-        const contractIdNum = parseInt(selectedContract.id, 10);
-        if (isNaN(contractIdNum)) return;
+    try {
+      const contractIdNum = parseInt(selectedContract.id, 10);
+      if (isNaN(contractIdNum)) return;
 
-        const apiSheets = await apiListRouteSheets({ contractId: contractIdNum });
-        const sheets: DoctorRouteSheet[] = apiSheets.map(s => ({
-          id: String(s.id),
-          doctorId: s.doctorId,
-          contractId: String(s.contractId),
-          specialty: s.specialty,
-          virtualDoctor: s.virtualDoctor,
-          employees: s.employees,
-          createdAt: s.createdAt,
-        }));
+      const apiSheets = await apiListRouteSheets({ contractId: contractIdNum });
+      const sheets: DoctorRouteSheet[] = apiSheets.map(s => ({
+        id: String(s.id),
+        doctorId: s.doctorId,
+        contractId: String(s.contractId),
+        specialty: s.specialty,
+        virtualDoctor: s.virtualDoctor,
+        employees: s.employees,
+        createdAt: s.createdAt,
+      }));
 
-        setRouteSheets(sheets);
-        
-        // Обновляем маршрут выбранного сотрудника, если он есть
-        if (selectedEmployee) {
-          const route = getEmployeeRoute(selectedEmployee.id);
-          setEmployeeRoute(route);
-        }
-      } catch (error) {
-        console.error('Error loading route sheets:', error);
+      setRouteSheets(sheets);
+      
+      if (selectedEmployee) {
+        const route = getEmployeeRoute(selectedEmployee.id, sheets);
+        setEmployeeRoute(route);
       }
-    };
-
-    loadRouteSheets();
-    
-    // Обновляем маршрутные листы каждые 10 секунд для отслеживания прогресса
-    const interval = setInterval(loadRouteSheets, 10000);
-    return () => clearInterval(interval);
+      setLastUpdate(new Date());
+    } catch (error) {
+      console.error('Error loading route sheets:', error);
+    }
   }, [selectedContract, selectedEmployee?.id]);
 
-  // Загрузка посещений за сегодня
   useEffect(() => {
-    const loadVisits = async () => {
-      if (!currentUser.clinicId && !currentUser.bin) return;
+    loadRouteSheets();
+    
+    if (autoRefresh) {
+      const interval = setInterval(loadRouteSheets, 10000);
+      return () => clearInterval(interval);
+    }
+  }, [loadRouteSheets, autoRefresh]);
 
-      try {
-        const clinicId = currentUser.clinicId || currentUser.uid;
-        const today = new Date().toISOString().split('T')[0];
-        const visitsList = await apiListEmployeeVisits({
-          clinicId,
-          date: today,
-        });
-        
-        const visitsData: EmployeeVisit[] = visitsList.map(v => ({
-          id: String(v.id),
-          employeeId: v.employeeId,
-          contractId: v.contractId ? String(v.contractId) : undefined,
-          clinicId: v.clinicId,
-          visitDate: v.visitDate,
-          checkInTime: v.checkInTime,
-          checkOutTime: v.checkOutTime,
-          status: v.status,
-          routeSheetId: v.routeSheetId ? String(v.routeSheetId) : undefined,
-          documentsIssued: v.documentsIssued,
-          registeredBy: v.registeredBy,
-          notes: v.notes,
-          createdAt: v.createdAt,
-          updatedAt: v.updatedAt,
-        }));
-        
-        setVisits(visitsData);
-      } catch (error) {
-        console.error('Error loading visits:', error);
+  // Загрузка посещений
+  const loadVisits = useCallback(async () => {
+    if (!currentUser.clinicId && !currentUser.bin) return;
+
+    try {
+      const clinicId = currentUser.clinicId || currentUser.uid;
+      let dateFilter = new Date().toISOString().split('T')[0];
+      
+      if (filters.dateFilter === 'week') {
+        const weekAgo = new Date();
+        weekAgo.setDate(weekAgo.getDate() - 7);
+        dateFilter = weekAgo.toISOString().split('T')[0];
+      } else if (filters.dateFilter === 'month') {
+        const monthAgo = new Date();
+        monthAgo.setMonth(monthAgo.getMonth() - 1);
+        dateFilter = monthAgo.toISOString().split('T')[0];
       }
-    };
+      
+      const visitsList = await apiListEmployeeVisits({
+        clinicId,
+        ...(filters.dateFilter !== 'all' && { date: dateFilter }),
+      });
+      
+      const visitsData: EmployeeVisit[] = visitsList.map(v => ({
+        id: String(v.id),
+        employeeId: v.employeeId,
+        contractId: v.contractId ? String(v.contractId) : undefined,
+        clinicId: v.clinicId,
+        visitDate: v.visitDate,
+        checkInTime: v.checkInTime,
+        checkOutTime: v.checkOutTime,
+        status: v.status,
+        routeSheetId: v.routeSheetId ? String(v.routeSheetId) : undefined,
+        documentsIssued: v.documentsIssued,
+        registeredBy: v.registeredBy,
+        notes: v.notes,
+        createdAt: v.createdAt,
+        updatedAt: v.updatedAt,
+      }));
+      
+      setVisits(visitsData);
+      setLastUpdate(new Date());
+    } catch (error) {
+      console.error('Error loading visits:', error);
+    }
+  }, [currentUser, filters.dateFilter]);
 
+  useEffect(() => {
     loadVisits();
-  }, [currentUser]);
-
-  // Поиск сотрудника
-  const filteredEmployees = selectedContract?.employees?.filter(emp => 
-    emp.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    emp.position.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    emp.id.includes(searchQuery)
-  ) || [];
+    
+    if (autoRefresh) {
+      const interval = setInterval(loadVisits, 5000); // Чаще обновляем посещения
+      return () => clearInterval(interval);
+    }
+  }, [loadVisits, autoRefresh]);
 
   // Получение маршрута сотрудника
-  const getEmployeeRoute = useCallback((employeeId: string): EmployeeRoute | null => {
-    if (!routeSheets.length) return null;
+  const getEmployeeRoute = useCallback((employeeId: string, sheets = routeSheets): EmployeeRoute | null => {
+    if (!sheets.length) return null;
 
     const routeItems: EmployeeRoute['routeItems'] = [];
     
-    routeSheets.forEach(sheet => {
+    sheets.forEach(sheet => {
       const empInSheet = sheet.employees.find(e => e.employeeId === employeeId);
       if (empInSheet) {
         routeItems.push({
@@ -274,7 +308,6 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
       // Проверяем, есть ли маршрутные листы для этого договора
       const existingSheets = await apiListRouteSheets({ contractId: contractIdNum });
       if (existingSheets.length === 0) {
-        // Создаем маршрутные листы для всех необходимых специализаций
         await createRouteSheetsForAllSpecialties(
           selectedContract.id,
           selectedContract.employees || [],
@@ -282,18 +315,8 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
         );
       }
 
-      // Загружаем обновленные маршрутные листы
-      const updatedSheets = await apiListRouteSheets({ contractId: contractIdNum });
-      const sheets: DoctorRouteSheet[] = updatedSheets.map(s => ({
-        id: String(s.id),
-        doctorId: s.doctorId,
-        contractId: String(s.contractId),
-        specialty: s.specialty,
-        virtualDoctor: s.virtualDoctor,
-        employees: s.employees,
-        createdAt: s.createdAt,
-      }));
-      setRouteSheets(sheets);
+      await loadRouteSheets();
+      await loadVisits();
 
       const visitData: EmployeeVisit = {
         id: String(visit.id),
@@ -317,29 +340,6 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
       
       const route = getEmployeeRoute(employee.id);
       setEmployeeRoute(route);
-
-      // Обновляем список посещений
-      const today = new Date().toISOString().split('T')[0];
-      const visitsList = await apiListEmployeeVisits({
-        clinicId,
-        date: today,
-      });
-      setVisits(visitsList.map(v => ({
-        id: String(v.id),
-        employeeId: v.employeeId,
-        contractId: v.contractId ? String(v.contractId) : undefined,
-        clinicId: v.clinicId,
-        visitDate: v.visitDate,
-        checkInTime: v.checkInTime,
-        checkOutTime: v.checkOutTime,
-        status: v.status,
-        routeSheetId: v.routeSheetId ? String(v.routeSheetId) : undefined,
-        documentsIssued: v.documentsIssued,
-        registeredBy: v.registeredBy,
-        notes: v.notes,
-        createdAt: v.createdAt,
-        updatedAt: v.updatedAt,
-      })));
     } catch (error) {
       console.error('Error checking in employee:', error);
       alert('Ошибка при регистрации сотрудника');
@@ -369,30 +369,7 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
       };
 
       setEmployeeVisit(updatedVisit);
-
-      // Обновляем список посещений
-      const clinicId = currentUser.clinicId || currentUser.uid;
-      const today = new Date().toISOString().split('T')[0];
-      const visitsList = await apiListEmployeeVisits({
-        clinicId,
-        date: today,
-      });
-      setVisits(visitsList.map(v => ({
-        id: String(v.id),
-        employeeId: v.employeeId,
-        contractId: v.contractId ? String(v.contractId) : undefined,
-        clinicId: v.clinicId,
-        visitDate: v.visitDate,
-        checkInTime: v.checkInTime,
-        checkOutTime: v.checkOutTime,
-        status: v.status,
-        routeSheetId: v.routeSheetId ? String(v.routeSheetId) : undefined,
-        documentsIssued: v.documentsIssued,
-        registeredBy: v.registeredBy,
-        notes: v.notes,
-        createdAt: v.createdAt,
-        updatedAt: v.updatedAt,
-      })));
+      await loadVisits();
     } catch (error) {
       console.error('Error checking out employee:', error);
       alert('Ошибка при регистрации выхода');
@@ -410,7 +387,6 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
       const visitId = parseInt(employeeVisit.id, 10);
       if (isNaN(visitId)) return;
 
-      // Если выдается маршрутный лист - генерируем PDF
       if (documentType === 'Маршрутный лист') {
         const { generateEmployeeRouteSheetPDF } = await import('../utils/pdfGenerator');
         const doc = generateEmployeeRouteSheetPDF(
@@ -447,82 +423,44 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
     }
   };
 
-  // Регистрация индивидуального пациента
-  const handleRegisterIndividualPatient = async (patient: IndividualPatient) => {
-    setIsRegistering(true);
-
-    try {
-      const clinicId = currentUser.clinicId || currentUser.uid;
-      if (!clinicId) {
-        alert('Ошибка: не указан ID клиники');
-        setIsRegistering(false);
-        return;
-      }
-
-      if (!patient.id) {
-        alert('Ошибка: не указан ID пациента');
-        setIsRegistering(false);
-        return;
-      }
-      
-      // Создаем посещение для индивидуального пациента
-      const visit = await apiCreateEmployeeVisit({
-        employeeId: patient.id,
-        contractId: undefined, // Индивидуальный пациент
-        clinicId,
-        visitDate: new Date().toISOString().split('T')[0],
-        status: 'registered',
-        registeredBy: currentUser.uid,
-        notes: `Индивидуальный пациент: ${patient.fullName}`,
-      });
-
-      const visitData: EmployeeVisit = {
-        id: String(visit.id),
-        employeeId: visit.employeeId,
-        contractId: undefined,
-        clinicId: visit.clinicId,
-        visitDate: visit.visitDate,
-        checkInTime: visit.checkInTime,
-        checkOutTime: visit.checkOutTime,
-        status: visit.status,
-        routeSheetId: visit.routeSheetId ? String(visit.routeSheetId) : undefined,
-        documentsIssued: visit.documentsIssued,
-        registeredBy: visit.registeredBy,
-        notes: visit.notes,
-        createdAt: visit.createdAt,
-        updatedAt: visit.updatedAt,
-      };
-
-      setEmployeeVisit(visitData);
-      setSelectedIndividualPatient(patient);
-      setShowIndividualPatientModal(false);
-
-      // Для индивидуальных пациентов создаем базовый маршрут (профпатолог + терапевт)
-      const route: EmployeeRoute = {
-        employeeId: patient.id,
-        contractId: undefined,
-        visitId: visitData.id,
-        routeItems: [
-          {
-            specialty: 'Профпатолог',
-            status: 'pending',
-            order: 1,
-          },
-          {
-            specialty: 'Терапевт',
-            status: 'pending',
-            order: 2,
-          },
-        ],
-      };
-      setEmployeeRoute(route);
-    } catch (error) {
-      console.error('Error registering individual patient:', error);
-      alert('Ошибка при регистрации пациента');
-    } finally {
-      setIsRegistering(false);
+  // Фильтрация сотрудников
+  const filteredEmployees = useMemo(() => {
+    let employees = selectedContract?.employees || [];
+    
+    // Поиск
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      employees = employees.filter(emp => 
+        emp.name.toLowerCase().includes(query) ||
+        emp.position.toLowerCase().includes(query) ||
+        emp.id.includes(query)
+      );
     }
-  };
+    
+    // Фильтр по статусу посещения
+    if (filters.visitStatus !== 'all') {
+      employees = employees.filter(emp => {
+        const visit = visits.find(v => v.employeeId === emp.id);
+        return visit?.status === filters.visitStatus;
+      });
+    }
+    
+    return employees;
+  }, [selectedContract?.employees, searchQuery, filters.visitStatus, visits]);
+
+  // Статистика посещений
+  const visitsStats = useMemo(() => ({
+    total: visits.length,
+    inProgress: visits.filter(v => v.status === 'in_progress' || v.status === 'registered').length,
+    completed: visits.filter(v => v.status === 'completed').length,
+  }), [visits]);
+
+  // Статистика по договорам
+  const contractsStats = useMemo(() => ({
+    total: contracts.length,
+    execution: contracts.filter(c => c.status === 'execution').length,
+    planning: contracts.filter(c => c.status === 'planning').length,
+  }), [contracts]);
 
   const handleLogout = () => {
     localStorage.removeItem('medwork_uid');
@@ -532,89 +470,122 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-slate-50">
-        <LoaderIcon className="w-8 h-8 animate-spin text-slate-400" />
+      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
+        <div className="text-center">
+          <LoaderIcon className="w-12 h-12 animate-spin text-blue-600 mx-auto mb-4" />
+          <p className="text-sm text-slate-600">Загрузка данных...</p>
+        </div>
       </div>
     );
   }
 
-  // Статистика посещений
-  const visitsStats = {
-    total: visits.length,
-    inProgress: visits.filter(v => v.status === 'in_progress' || v.status === 'registered').length,
-    completed: visits.filter(v => v.status === 'completed').length,
-  };
-
   return (
-    <div className="min-h-screen bg-slate-50">
-      {/* Header - унифицированный стиль с Dashboard */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-30">
-        <div className="px-6 py-3">
-          <div className="flex items-center justify-between">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
+      {/* Современный минималистичный Header */}
+      <header className="bg-white/80 backdrop-blur-xl border-b border-slate-200/50 sticky top-0 z-40 shadow-sm">
+        <div className="max-w-[1920px] mx-auto px-6 py-4">
+          <div className="flex items-center justify-between gap-6">
             {/* Left: Logo and Info */}
             <div className="flex items-center gap-6">
-              <div className="flex items-center">
-                <BrandLogo size="sm" />
-              </div>
+              <BrandLogo size="sm" />
               
-              <div className="hidden md:flex items-center gap-3 pl-6 border-l border-slate-200">
+              <div className="hidden md:flex items-center gap-4 pl-6 border-l border-slate-200">
                 <div className="flex flex-col">
-                  <span className="text-sm font-semibold text-slate-900">
+                  <span className="text-base font-bold text-slate-900">
                     Регистратура
                   </span>
-                  <span className="text-[10px] text-slate-500 uppercase">
-                    {currentUser.clinicName || 'Клиника'}
+                  <span className="text-xs text-slate-500">
+                    {currentUser.clinicName || currentUser.companyName || 'Клиника'}
                   </span>
                 </div>
               </div>
             </div>
 
-            {/* Center: Stats */}
-            <div className="hidden lg:flex items-center gap-4">
-              <div className="px-4 py-2 bg-slate-50 rounded-lg">
-                <div className="text-xs text-slate-500">Всего сегодня</div>
-                <div className="text-sm font-bold text-slate-900">{visitsStats.total}</div>
+            {/* Center: Real-time Stats */}
+            <div className="hidden xl:flex items-center gap-3">
+              <div className="flex items-center gap-2 px-4 py-2 bg-gradient-to-br from-blue-50 to-blue-100/50 rounded-xl border border-blue-200/50">
+                <BriefcaseIcon className="w-4 h-4 text-blue-600" />
+                <div className="text-left">
+                  <div className="text-xs text-blue-600 font-medium">Договоры</div>
+                  <div className="text-sm font-bold text-blue-900">{contractsStats.total}</div>
+                </div>
               </div>
-              <div className="px-4 py-2 bg-blue-50 rounded-lg">
-                <div className="text-xs text-blue-600">В работе</div>
-                <div className="text-sm font-bold text-blue-700">{visitsStats.inProgress}</div>
+              <div className="flex items-center gap-2 px-4 py-2 bg-gradient-to-br from-slate-50 to-slate-100/50 rounded-xl border border-slate-200/50">
+                <UsersIcon className="w-4 h-4 text-slate-600" />
+                <div className="text-left">
+                  <div className="text-xs text-slate-500 font-medium">Сегодня</div>
+                  <div className="text-sm font-bold text-slate-900">{visitsStats.total}</div>
+                </div>
               </div>
-              <div className="px-4 py-2 bg-green-50 rounded-lg">
-                <div className="text-xs text-green-600">Завершено</div>
-                <div className="text-sm font-bold text-green-700">{visitsStats.completed}</div>
+              <div className="flex items-center gap-2 px-4 py-2 bg-gradient-to-br from-amber-50 to-amber-100/50 rounded-xl border border-amber-200/50">
+                <ClockIcon className="w-4 h-4 text-amber-600" />
+                <div className="text-left">
+                  <div className="text-xs text-amber-600 font-medium">В работе</div>
+                  <div className="text-sm font-bold text-amber-900">{visitsStats.inProgress}</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 px-4 py-2 bg-gradient-to-br from-green-50 to-green-100/50 rounded-xl border border-green-200/50">
+                <CheckCircleIcon className="w-4 h-4 text-green-600" />
+                <div className="text-left">
+                  <div className="text-xs text-green-600 font-medium">Завершено</div>
+                  <div className="text-sm font-bold text-green-900">{visitsStats.completed}</div>
+                </div>
               </div>
             </div>
 
-            {/* Right: Logout */}
-            <button
-              onClick={handleLogout}
-              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-all"
-            >
-              <LogoutIcon className="w-4 h-4"/>
-              <span className="hidden sm:inline">Выход</span>
-            </button>
+            {/* Right: Controls */}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setAutoRefresh(!autoRefresh)}
+                className={`p-2 rounded-lg transition-all ${
+                  autoRefresh 
+                    ? 'bg-blue-100 text-blue-600 hover:bg-blue-200' 
+                    : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
+                }`}
+                title={autoRefresh ? 'Авто-обновление включено' : 'Авто-обновление выключено'}
+              >
+                <RefreshIcon className={`w-5 h-5 ${autoRefresh ? 'animate-spin-slow' : ''}`} />
+              </button>
+              
+              <div className="hidden lg:block text-xs text-slate-500">
+                Обновлено: {lastUpdate.toLocaleTimeString('ru-RU')}
+              </div>
+              
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 rounded-xl transition-all"
+              >
+                <LogoutIcon className="w-4 h-4"/>
+                <span className="hidden sm:inline">Выход</span>
+              </button>
+            </div>
           </div>
         </div>
       </header>
 
-      <div className="max-w-7xl mx-auto px-6 py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Левая панель: Выбор договора и список сотрудников */}
-          <div className="lg:col-span-1 space-y-4">
-            {/* Выбор договора с детальной информацией */}
-            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-              <div className="p-4 border-b border-slate-200 bg-gradient-to-r from-blue-50 to-slate-50">
-                <div className="flex items-center gap-2 mb-3">
-                  <BriefcaseIcon className="w-5 h-5 text-blue-600" />
-                  <label className="text-sm font-semibold text-slate-900">
-                    Договор
-                  </label>
+      <div className="max-w-[1920px] mx-auto px-6 py-6">
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+          {/* Левая панель: Договоры и список сотрудников (40%) */}
+          <div className="xl:col-span-5 space-y-4">
+            {/* Выбор договора */}
+            <div className="bg-white/90 backdrop-blur-sm rounded-2xl border border-slate-200/50 shadow-sm overflow-hidden">
+              <div className="p-5 border-b border-slate-100 bg-gradient-to-r from-blue-50/50 to-slate-50/50">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg">
+                      <BriefcaseIcon className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-slate-900">Договор</h3>
+                      <p className="text-xs text-slate-500">Выберите активный договор</p>
+                    </div>
+                  </div>
                 </div>
                 {contracts.length === 0 ? (
-                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
-                    <p className="text-sm text-amber-800 text-center">
-                      Договоры не найдены. Проверьте, что у клиники есть активные договоры.
-                    </p>
+                  <div className="p-6 bg-amber-50/50 border border-amber-200/50 rounded-xl text-center">
+                    <AlertCircleIcon className="w-8 h-8 text-amber-500 mx-auto mb-2" />
+                    <p className="text-sm font-medium text-amber-800">Договоры не найдены</p>
+                    <p className="text-xs text-amber-600 mt-1">Проверьте наличие активных договоров</p>
                   </div>
                 ) : (
                   <select
@@ -626,11 +597,11 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
                       setEmployeeVisit(null);
                       setEmployeeRoute(null);
                     }}
-                    className="w-full px-3 py-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-medium bg-white"
+                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm font-medium bg-white shadow-sm transition-all"
                   >
                     {contracts.map(contract => (
                       <option key={contract.id} value={contract.id}>
-                        {contract.number} - {contract.clientName}
+                        {contract.number} — {contract.clientName}
                       </option>
                     ))}
                   </select>
@@ -639,108 +610,131 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
               
               {/* Детальная информация о договоре */}
               {selectedContract && (
-                <div className="p-4 space-y-3">
-                  <div className="grid grid-cols-2 gap-3 text-sm">
-                    <div>
-                      <p className="text-xs text-slate-500 mb-1">Номер</p>
-                      <p className="font-semibold text-slate-900">{selectedContract.number || '—'}</p>
+                <div className="p-5">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="p-3 bg-slate-50/50 rounded-xl border border-slate-100">
+                      <p className="text-xs text-slate-500 mb-1 font-medium">Номер договора</p>
+                      <p className="text-sm font-bold text-slate-900">{selectedContract.number || '—'}</p>
                     </div>
-                    <div>
-                      <p className="text-xs text-slate-500 mb-1">Дата</p>
-                      <p className="font-semibold text-slate-900">
+                    <div className="p-3 bg-slate-50/50 rounded-xl border border-slate-100">
+                      <p className="text-xs text-slate-500 mb-1 font-medium">Дата</p>
+                      <p className="text-sm font-bold text-slate-900">
                         {selectedContract.date ? new Date(selectedContract.date).toLocaleDateString('ru-RU') : '—'}
                       </p>
                     </div>
-                    <div className="col-span-2">
-                      <p className="text-xs text-slate-500 mb-1">Клиент</p>
-                      <p className="font-semibold text-slate-900 truncate">{selectedContract.clientName || '—'}</p>
+                    <div className="col-span-2 p-3 bg-slate-50/50 rounded-xl border border-slate-100">
+                      <p className="text-xs text-slate-500 mb-1 font-medium">Клиент</p>
+                      <p className="text-sm font-bold text-slate-900">{selectedContract.clientName || '—'}</p>
                     </div>
-                    <div className="col-span-2">
-                      <p className="text-xs text-slate-500 mb-1">Сотрудников</p>
-                      <p className="font-semibold text-slate-900">
+                    <div className="p-3 bg-blue-50/50 rounded-xl border border-blue-100">
+                      <p className="text-xs text-blue-600 mb-1 font-medium">Сотрудников</p>
+                      <p className="text-sm font-bold text-blue-900">
                         {selectedContract.employees?.length || 0} / {selectedContract.plannedHeadcount || 0}
                       </p>
                     </div>
-                  </div>
-                  <div className="pt-3 border-t border-slate-200">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-slate-500">Статус</span>
-                      <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                        selectedContract.status === 'execution' 
-                          ? 'bg-green-100 text-green-700'
-                          : selectedContract.status === 'planning'
-                          ? 'bg-amber-100 text-amber-700'
-                          : 'bg-slate-100 text-slate-700'
-                      }`}>
+                    <div className="p-3 bg-green-50/50 rounded-xl border border-green-100">
+                      <p className="text-xs text-green-600 mb-1 font-medium">Статус</p>
+                      <p className="text-xs font-bold text-green-900">
                         {selectedContract.status === 'execution' ? 'Исполнение' : 
                          selectedContract.status === 'planning' ? 'Планирование' : 
                          selectedContract.status}
-                      </span>
+                      </p>
                     </div>
                   </div>
                 </div>
               )}
             </div>
 
-            {/* Поиск сотрудника */}
-            <div className="bg-white rounded-xl border border-slate-200 p-4">
+            {/* Поиск и фильтры */}
+            <div className="bg-white/90 backdrop-blur-sm rounded-2xl border border-slate-200/50 shadow-sm p-5 space-y-3">
               <div className="relative">
-                <SearchIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-400" />
+                <SearchIcon className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-400" />
                 <input
                   type="text"
                   placeholder="Поиск по ФИО, должности, ID..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full pl-12 pr-4 py-3 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm font-medium shadow-sm transition-all"
                 />
+              </div>
+              
+              <div className="flex gap-2">
+                <select
+                  value={filters.visitStatus}
+                  onChange={(e) => setFilters({ ...filters, visitStatus: e.target.value as any })}
+                  className="flex-1 px-3 py-2 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs font-medium bg-white"
+                >
+                  <option value="all">Все статусы</option>
+                  <option value="registered">Зарегистрированы</option>
+                  <option value="in_progress">В работе</option>
+                  <option value="completed">Завершены</option>
+                </select>
+                
+                <select
+                  value={filters.dateFilter}
+                  onChange={(e) => setFilters({ ...filters, dateFilter: e.target.value as any })}
+                  className="flex-1 px-3 py-2 border-2 border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs font-medium bg-white"
+                >
+                  <option value="today">Сегодня</option>
+                  <option value="week">Неделя</option>
+                  <option value="month">Месяц</option>
+                  <option value="all">Все время</option>
+                </select>
               </div>
             </div>
 
-            {/* Список сотрудников */}
-            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-              <div className="p-4 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-blue-50">
+            {/* Список сотрудников с виртуализацией */}
+            <div className="bg-white/90 backdrop-blur-sm rounded-2xl border border-slate-200/50 shadow-sm overflow-hidden">
+              <div className="p-5 border-b border-slate-100 bg-gradient-to-r from-slate-50/50 to-blue-50/50">
                 <div className="flex items-center justify-between">
-                  <h2 className="font-semibold text-slate-900">
-                    Сотрудники
-                  </h2>
-                  <span className="px-2.5 py-1 bg-white rounded-full text-xs font-bold text-slate-700 border border-slate-200">
-                    {filteredEmployees.length}
-                  </span>
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-500 to-slate-600 flex items-center justify-center shadow-lg">
+                      <UsersIcon className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                      <h2 className="text-base font-bold text-slate-900">Сотрудники</h2>
+                      <p className="text-xs text-slate-500">{filteredEmployees.length} человек</p>
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div className="max-h-[600px] overflow-y-auto">
+              <div className="max-h-[calc(100vh-600px)] min-h-[400px] overflow-y-auto">
                 {filteredEmployees.length === 0 ? (
-                  <div className="p-8 text-center">
-                    <UserMdIcon className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-                    <p className="text-sm text-slate-500">Сотрудники не найдены</p>
+                  <div className="p-12 text-center">
+                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center mx-auto mb-4">
+                      <UserMdIcon className="w-8 h-8 text-slate-300" />
+                    </div>
+                    <p className="text-sm font-medium text-slate-500">Сотрудники не найдены</p>
+                    <p className="text-xs text-slate-400 mt-1">Попробуйте изменить фильтры</p>
                   </div>
                 ) : (
                   <div className="divide-y divide-slate-100">
                     {filteredEmployees.map(employee => {
                       const hasVisit = visits.some(v => v.employeeId === employee.id && v.status !== 'completed');
+                      const isSelected = selectedEmployee?.id === employee.id;
                       return (
                         <button
                           key={employee.id}
                           onClick={() => handleCheckIn(employee)}
-                          className={`w-full p-4 text-left hover:bg-slate-50 transition-all ${
-                            selectedEmployee?.id === employee.id 
-                              ? 'bg-blue-50 border-l-4 border-blue-500 shadow-sm' 
-                              : 'hover:border-l-4 hover:border-slate-200'
+                          className={`w-full p-4 text-left hover:bg-blue-50/50 transition-all relative group ${
+                            isSelected 
+                              ? 'bg-gradient-to-r from-blue-50 to-blue-100/50 border-l-4 border-blue-500' 
+                              : 'border-l-4 border-transparent hover:border-blue-300'
                           }`}
                         >
                           <div className="flex items-start justify-between gap-3">
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 mb-1">
-                                <p className="font-semibold text-slate-900 truncate">{employee.name}</p>
+                                <p className="text-sm font-bold text-slate-900 truncate">{employee.name}</p>
                                 {hasVisit && (
-                                  <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[10px] font-bold">
+                                  <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-[10px] font-bold">
                                     В работе
                                   </span>
                                 )}
                               </div>
-                              <p className="text-sm text-slate-600 truncate">{employee.position}</p>
+                              <p className="text-xs text-slate-600 truncate">{employee.position}</p>
                               {employee.harmfulFactor && (
-                                <p className="text-xs text-amber-600 mt-1 truncate" title={employee.harmfulFactor}>
+                                <p className="text-[10px] text-amber-600 mt-1 truncate" title={employee.harmfulFactor}>
                                   {employee.harmfulFactor}
                                 </p>
                               )}
@@ -769,13 +763,13 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
             </div>
           </div>
 
-          {/* Правая панель: Информация о сотруднике и маршрут */}
-          <div className="lg:col-span-2 space-y-4">
+          {/* Правая панель: Информация о сотруднике и действия (60%) */}
+          <div className="xl:col-span-7 space-y-4">
             {(selectedEmployee || selectedIndividualPatient) ? (
               <>
-                {/* Информация о сотруднике/пациенте */}
-                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                  <div className="p-6 border-b border-slate-200 bg-gradient-to-r from-blue-50 to-slate-50">
+                {/* Информация о сотруднике */}
+                <div className="bg-white/90 backdrop-blur-sm rounded-2xl border border-slate-200/50 shadow-sm overflow-hidden">
+                  <div className="p-6 border-b border-slate-100 bg-gradient-to-r from-blue-50/50 to-slate-50/50">
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
                         <h2 className="text-2xl font-bold text-slate-900 mb-1">
@@ -797,21 +791,21 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
                   </div>
                   <div className="p-6">
                     <div className="grid grid-cols-2 gap-4 mb-6">
-                      <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
-                        <p className="text-xs text-slate-500 mb-1">Дата рождения</p>
-                        <p className="text-sm font-semibold text-slate-900">
+                      <div className="p-4 bg-slate-50/50 rounded-xl border border-slate-100">
+                        <p className="text-xs text-slate-500 mb-1 font-medium">Дата рождения</p>
+                        <p className="text-sm font-bold text-slate-900">
                           {selectedEmployee?.dob || selectedIndividualPatient?.dateOfBirth || '—'}
                         </p>
                       </div>
-                      <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
-                        <p className="text-xs text-slate-500 mb-1">Пол</p>
-                        <p className="text-sm font-semibold text-slate-900">
+                      <div className="p-4 bg-slate-50/50 rounded-xl border border-slate-100">
+                        <p className="text-xs text-slate-500 mb-1 font-medium">Пол</p>
+                        <p className="text-sm font-bold text-slate-900">
                           {selectedEmployee?.gender || selectedIndividualPatient?.gender || '—'}
                         </p>
                       </div>
                       {(selectedEmployee?.harmfulFactor || selectedIndividualPatient?.harmfulFactors) && (
-                        <div className="col-span-2 p-3 bg-amber-50 rounded-lg border border-amber-200">
-                          <p className="text-xs text-amber-600 mb-1 font-semibold">Вредные факторы</p>
+                        <div className="col-span-2 p-4 bg-gradient-to-r from-amber-50 to-amber-100/50 rounded-xl border border-amber-200/50">
+                          <p className="text-xs text-amber-600 mb-1 font-bold">Вредные факторы</p>
                           <p className="text-sm font-medium text-amber-900">
                             {selectedEmployee?.harmfulFactor || selectedIndividualPatient?.harmfulFactors || '—'}
                           </p>
@@ -823,7 +817,7 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
                       <button
                         onClick={() => handleCheckIn(selectedEmployee)}
                         disabled={isRegistering}
-                        className="group relative w-full py-3.5 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-xl font-semibold hover:from-blue-700 hover:to-blue-600 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                        className="group relative w-full py-4 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-xl font-bold hover:from-blue-700 hover:to-blue-600 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
                       >
                         {isRegistering ? (
                           <>
@@ -839,10 +833,10 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
                       </button>
                     )}
 
-                    {employeeVisit && employeeVisit.status === 'in_progress' && (
+                    {employeeVisit && employeeVisit.status !== 'completed' && (
                       <button
                         onClick={handleCheckOut}
-                        className="group relative w-full py-3.5 bg-gradient-to-r from-green-600 to-green-500 text-white rounded-xl font-semibold hover:from-green-700 hover:to-green-600 transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
+                        className="group relative w-full py-4 bg-gradient-to-r from-green-600 to-green-500 text-white rounded-xl font-bold hover:from-green-700 hover:to-green-600 transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3"
                       >
                         <ArrowRightIcon className="w-5 h-5" />
                         Зарегистрировать выход
@@ -853,12 +847,19 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
 
                 {/* Маршрут осмотра */}
                 {employeeRoute && employeeRoute.routeItems.length > 0 && (
-                  <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                    <div className="p-4 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-blue-50">
-                      <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                        <CalendarIcon className="w-5 h-5 text-blue-600" />
-                        Маршрут осмотра
-                      </h3>
+                  <div className="bg-white/90 backdrop-blur-sm rounded-2xl border border-slate-200/50 shadow-sm overflow-hidden">
+                    <div className="p-5 border-b border-slate-100 bg-gradient-to-r from-slate-50/50 to-blue-50/50">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg">
+                          <CalendarIcon className="w-5 h-5 text-white" />
+                        </div>
+                        <div>
+                          <h3 className="text-base font-bold text-slate-900">Маршрут осмотра</h3>
+                          <p className="text-xs text-slate-500">
+                            Пройдено {employeeRoute.routeItems.filter(i => i.status === 'completed').length} из {employeeRoute.routeItems.length}
+                          </p>
+                        </div>
+                      </div>
                     </div>
                     <div className="p-6">
                       <div className="space-y-3">
@@ -867,31 +868,28 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
                             key={index}
                             className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all ${
                               item.status === 'completed' 
-                                ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-300 shadow-sm' 
+                                ? 'bg-gradient-to-r from-green-50 to-green-100/50 border-green-300 shadow-sm' 
                                 : item.status === 'in_progress'
-                                ? 'bg-gradient-to-r from-blue-50 to-cyan-50 border-blue-300 shadow-sm'
-                                : 'bg-slate-50 border-slate-200 hover:border-slate-300'
+                                ? 'bg-gradient-to-r from-blue-50 to-blue-100/50 border-blue-300 shadow-sm'
+                                : 'bg-slate-50/50 border-slate-200 hover:border-slate-300'
                             }`}
                           >
                             <div className={`flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm shadow-sm ${
                               item.status === 'completed'
-                                ? 'bg-green-500 text-white'
+                                ? 'bg-gradient-to-br from-green-500 to-green-600 text-white'
                                 : item.status === 'in_progress'
-                                ? 'bg-blue-500 text-white'
+                                ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white'
                                 : 'bg-white border-2 border-slate-300 text-slate-600'
                             }`}>
                               {item.order}
                             </div>
                             <div className="flex-1 min-w-0">
-                              <p className="font-bold text-slate-900 text-base">{item.specialty}</p>
+                              <p className="font-bold text-slate-900 text-sm">{item.specialty}</p>
                               {item.doctorName && (
-                                <p className="text-sm text-slate-600 mt-1">Врач: {item.doctorName}</p>
-                              )}
-                              {item.roomNumber && (
-                                <p className="text-sm text-slate-600">Кабинет: {item.roomNumber}</p>
+                                <p className="text-xs text-slate-600 mt-1">Врач: {item.doctorName}</p>
                               )}
                               {item.examinationDate && (
-                                <p className="text-xs text-slate-500 mt-1">
+                                <p className="text-[10px] text-slate-500 mt-1">
                                   Осмотр: {new Date(item.examinationDate).toLocaleString('ru-RU')}
                                 </p>
                               )}
@@ -901,7 +899,7 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
                                 <CheckCircleIcon className="w-7 h-7 text-green-500" />
                               )}
                               {item.status === 'in_progress' && (
-                                <ClockIcon className="w-7 h-7 text-blue-500 animate-spin" />
+                                <ClockIcon className="w-7 h-7 text-blue-500" />
                               )}
                               {item.status === 'pending' && (
                                 <div className="w-7 h-7 rounded-full border-2 border-slate-300 bg-white" />
@@ -916,18 +914,25 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
 
                 {/* Выданные документы */}
                 {employeeVisit && (
-                  <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                    <div className="p-4 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-blue-50">
-                      <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                        <FileTextIcon className="w-5 h-5 text-blue-600" />
-                        Выданные документы
-                      </h3>
+                  <div className="bg-white/90 backdrop-blur-sm rounded-2xl border border-slate-200/50 shadow-sm overflow-hidden">
+                    <div className="p-5 border-b border-slate-100 bg-gradient-to-r from-slate-50/50 to-blue-50/50">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-500 to-slate-600 flex items-center justify-center shadow-lg">
+                          <FileTextIcon className="w-5 h-5 text-white" />
+                        </div>
+                        <div>
+                          <h3 className="text-base font-bold text-slate-900">Выданные документы</h3>
+                          <p className="text-xs text-slate-500">
+                            {employeeVisit.documentsIssued?.length || 0} документов
+                          </p>
+                        </div>
+                      </div>
                     </div>
                     <div className="p-6">
                       {employeeVisit.documentsIssued && employeeVisit.documentsIssued.length > 0 ? (
                         <div className="space-y-2 mb-4">
                           {employeeVisit.documentsIssued.map((doc, index) => (
-                            <div key={index} className="flex items-center gap-3 p-3 bg-gradient-to-r from-slate-50 to-blue-50 rounded-lg border border-slate-200">
+                            <div key={index} className="flex items-center gap-3 p-3 bg-gradient-to-r from-slate-50 to-blue-50/50 rounded-xl border border-slate-200/50">
                               <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center flex-shrink-0">
                                 <FileTextIcon className="w-4 h-4 text-blue-600" />
                               </div>
@@ -937,16 +942,16 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
                           ))}
                         </div>
                       ) : (
-                        <div className="mb-4 p-4 bg-slate-50 rounded-lg border border-slate-200 text-center">
-                          <FileTextIcon className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                          <p className="text-sm text-slate-500">Документы не выданы</p>
+                        <div className="mb-4 p-6 bg-slate-50/50 rounded-xl border border-slate-200/50 text-center">
+                          <FileTextIcon className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+                          <p className="text-sm font-medium text-slate-500">Документы не выданы</p>
                         </div>
                       )}
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <button
                           onClick={() => handleIssueDocument('Направление на анализы')}
                           disabled={isRegistering}
-                          className="group relative inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-xl font-semibold hover:from-blue-700 hover:to-blue-600 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="group relative inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-xl font-bold hover:from-blue-700 hover:to-blue-600 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           <FileTextIcon className="w-4 h-4" />
                           <span>Выдать направление</span>
@@ -954,10 +959,10 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
                         <button
                           onClick={() => handleIssueDocument('Маршрутный лист')}
                           disabled={isRegistering}
-                          className="group relative inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-green-600 to-green-500 text-white rounded-xl font-semibold hover:from-green-700 hover:to-green-600 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="group relative inline-flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-green-600 to-green-500 text-white rounded-xl font-bold hover:from-green-700 hover:to-green-600 transition-all shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          <FileTextIcon className="w-4 h-4" />
-                          <span>Выдать маршрутный лист</span>
+                          <DownloadIcon className="w-4 h-4" />
+                          <span>Маршрутный лист</span>
                         </button>
                       </div>
                     </div>
@@ -965,9 +970,12 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
                 )}
               </>
             ) : (
-              <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
-                <AlertCircleIcon className="w-16 h-16 text-slate-300 mx-auto mb-4" />
-                <p className="text-slate-500">Выберите сотрудника для просмотра информации</p>
+              <div className="bg-white/90 backdrop-blur-sm rounded-2xl border border-slate-200/50 shadow-sm p-16 text-center">
+                <div className="w-24 h-24 rounded-3xl bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center mx-auto mb-6 shadow-inner">
+                  <AlertCircleIcon className="w-12 h-12 text-slate-300" />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 mb-2">Выберите сотрудника</h3>
+                <p className="text-sm text-slate-500">Выберите сотрудника из списка для просмотра информации и регистрации</p>
               </div>
             )}
           </div>
@@ -978,4 +986,3 @@ const RegistrationDesk: React.FC<RegistrationDeskProps> = ({ currentUser }) => {
 };
 
 export default RegistrationDesk;
-
