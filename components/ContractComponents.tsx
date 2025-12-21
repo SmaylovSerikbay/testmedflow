@@ -11,8 +11,7 @@ import {
   generateCommissionOrderPDF,
   generateFinalActPDF,
   generateHealthPlanPDF,
-  generateSummaryReportPDF,
-  generateEmergencyNotificationPDF
+  generateSummaryReportPDF
 } from '../utils/pdfGenerator';
 
 // --- RESEARCH PARSING UTILITIES ---
