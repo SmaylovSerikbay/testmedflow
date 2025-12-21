@@ -27,7 +27,6 @@ import {
   apiCreateRouteSheet,
   apiListDoctors,
 } from '../services/api';
-import { IndividualPatient } from '../types';
 import { createRouteSheetsForAllSpecialties } from '../utils/routeSheetGenerator';
 
 interface RegistrationDeskProps {
