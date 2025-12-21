@@ -1679,6 +1679,10 @@ func createEmployeeVisitHandler(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
+	// Логируем входящие данные для отладки
+	log.Printf("createEmployeeVisit: received request - employeeId=%s, contractId=%v, clinicId=%s, visitDate=%s, registeredBy=%v",
+		in.EmployeeID, in.ContractID, in.ClinicID, in.VisitDate, in.RegisteredBy)
+
 	// Проверяем существование контракта, если он указан
 	if in.ContractID != nil {
 		var contractExists bool
@@ -1693,6 +1697,7 @@ func createEmployeeVisitHandler(w http.ResponseWriter, r *http.Request) {
 			errorResponse(w, http.StatusBadRequest, fmt.Sprintf("contract with id %d does not exist", *in.ContractID))
 			return
 		}
+		log.Printf("createEmployeeVisit: contract %d exists", *in.ContractID)
 	}
 
 	visitDate := in.VisitDate
@@ -1707,7 +1712,9 @@ func createEmployeeVisitHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	checkInTime := time.Now().Format(time.RFC3339)
+	checkInTime := time.Now()
+	log.Printf("createEmployeeVisit: attempting insert - employeeId=%s, contractId=%v, clinicId=%s, visitDate=%s, checkInTime=%s",
+		in.EmployeeID, in.ContractID, in.ClinicID, visitDate, checkInTime.Format(time.RFC3339))
 
 	var id int64
 	err := db.QueryRow(ctx, `
@@ -1716,11 +1723,13 @@ VALUES ($1, $2, $3, $4, $5, 'registered', $6, $7, '[]'::jsonb)
 RETURNING id
 `, in.EmployeeID, in.ContractID, in.ClinicID, visitDate, checkInTime, in.RegisteredBy, in.Notes).Scan(&id)
 	if err != nil {
-		log.Printf("createEmployeeVisit error: %v (employeeId=%s, contractId=%v, clinicId=%s, visitDate=%s)",
-			err, in.EmployeeID, in.ContractID, in.ClinicID, visitDate)
+		log.Printf("createEmployeeVisit INSERT error: %v", err)
+		log.Printf("createEmployeeVisit error details: employeeId=%s, contractId=%v, clinicId=%s, visitDate=%s, checkInTime=%s, registeredBy=%v, notes=%v",
+			in.EmployeeID, in.ContractID, in.ClinicID, visitDate, checkInTime, in.RegisteredBy, in.Notes)
 		errorResponse(w, http.StatusInternalServerError, fmt.Sprintf("db error: %v", err))
 		return
 	}
+	log.Printf("createEmployeeVisit: successfully inserted visit with id=%d", id)
 
 	var visit EmployeeVisit
 	var createdAt, updatedAt time.Time
