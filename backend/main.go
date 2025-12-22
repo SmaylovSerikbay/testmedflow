@@ -89,6 +89,48 @@ type Contract struct {
 	CalendarPlan     *CalendarPlan  `json:"calendarPlan,omitempty"`
 	ClientSignOTP    *string        `json:"clientSignOtp,omitempty"`
 	ClinicSignOTP    *string        `json:"clinicSignOtp,omitempty"`
+	// Новые поля для расширенного функционала
+	FinalActContent   *string `json:"finalActContent,omitempty"`
+	HealthPlanContent *string `json:"healthPlanContent,omitempty"`
+	SummaryReport     any     `json:"summaryReport,omitempty"`    // Сводный отчет (п.17)
+	EmergencyNotices  any     `json:"emergencyNotices,omitempty"` // Экстренные извещения (п.19)
+	NamedLists        any     `json:"namedLists,omitempty"`       // Поименные списки (п.15)
+}
+
+// Поименные списки для заключительного акта (п.15 Приказа)
+type NamedLists struct {
+	TransferToOtherWork  []string `json:"transferToOtherWork"`  // Перевод на другую работу
+	HospitalTreatment    []string `json:"hospitalTreatment"`    // Стационарное лечение
+	SanatoriumTreatment  []string `json:"sanatoriumTreatment"`  // Санаторно-курортное лечение
+	TherapeuticNutrition []string `json:"therapeuticNutrition"` // Лечебно-профилактическое питание
+	DynamicObservation   []string `json:"dynamicObservation"`   // Динамическое наблюдение
+}
+
+// Экстренное извещение (п.19 Приказа)
+type EmergencyNotice struct {
+	ID           int64  `json:"id"`
+	ContractID   int64  `json:"contractId"`
+	EmployeeID   string `json:"employeeId"`
+	EmployeeName string `json:"employeeName"`
+	DiseaseType  string `json:"diseaseType"` // "infectious" | "parasitic" | "carrier"
+	DiseaseName  string `json:"diseaseName"`
+	SentDate     string `json:"sentDate"`
+	SentTo       string `json:"sentTo"` // Территориальное подразделение
+	Status       string `json:"status"` // "sent" | "pending"
+}
+
+// Сводный отчет (п.17 Приказа, Приложение 2)
+type SummaryReport struct {
+	ContractID           int64          `json:"contractId"`
+	ReportDate           string         `json:"reportDate"`
+	TotalEmployees       int            `json:"totalEmployees"`
+	ExaminedEmployees    int            `json:"examinedEmployees"`
+	FitEmployees         int            `json:"fitEmployees"`
+	UnfitEmployees       int            `json:"unfitEmployees"`
+	ObservationEmployees int            `json:"observationEmployees"`
+	Categories           map[string]int `json:"categories"` // Классификация по п.21
+	SentDate             string         `json:"sentDate"`
+	SentTo               string         `json:"sentTo"`
 }
 
 // Doctor belongs to clinic (clinic_uid from users.id with role=clinic)
@@ -650,10 +692,47 @@ CREATE TABLE IF NOT EXISTS ambulatory_cards (
 		return nil, fmt.Errorf("migrate ambulatory_cards: %w", err)
 	}
 
-	// Migration Version: 2024-12-22-v3 - FINAL FIX
+	// Migration Version: 2024-12-22-v5 - Расширенный функционал
+	// Добавляем новые поля и таблицы для полного соответствия Приказу
+	log.Printf("INFO: [v5] Adding extended functionality fields and tables...")
+
+	// Добавляем новые поля в contracts
+	_, _ = tx.Exec(ctx, `ALTER TABLE contracts ADD COLUMN IF NOT EXISTS final_act_content TEXT;`)
+	_, _ = tx.Exec(ctx, `ALTER TABLE contracts ADD COLUMN IF NOT EXISTS health_plan_content TEXT;`)
+	_, _ = tx.Exec(ctx, `ALTER TABLE contracts ADD COLUMN IF NOT EXISTS summary_report JSONB;`)
+	_, _ = tx.Exec(ctx, `ALTER TABLE contracts ADD COLUMN IF NOT EXISTS emergency_notices JSONB DEFAULT '[]'::jsonb;`)
+	_, _ = tx.Exec(ctx, `ALTER TABLE contracts ADD COLUMN IF NOT EXISTS named_lists JSONB;`)
+
+	// Создаем таблицу для экстренных извещений
+	_, err = tx.Exec(ctx, `
+CREATE TABLE IF NOT EXISTS emergency_notices (
+  id           SERIAL PRIMARY KEY,
+  contract_id  INTEGER NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+  employee_id TEXT NOT NULL,
+  employee_name TEXT NOT NULL,
+  disease_type TEXT NOT NULL,
+  disease_name TEXT NOT NULL,
+  sent_date    DATE NOT NULL DEFAULT CURRENT_DATE,
+  sent_to      TEXT NOT NULL,
+  status       TEXT NOT NULL DEFAULT 'sent',
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT valid_disease_type CHECK (disease_type IN ('infectious', 'parasitic', 'carrier')),
+  CONSTRAINT valid_notice_status CHECK (status IN ('sent', 'pending'))
+);
+`)
+	if err != nil {
+		log.Printf("WARNING: create emergency_notices table: %v", err)
+	}
+
+	_, _ = tx.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_emergency_notices_contract ON emergency_notices(contract_id);`)
+	_, _ = tx.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_emergency_notices_employee ON emergency_notices(employee_id);`)
+
+	log.Printf("INFO: Extended functionality tables and fields added successfully")
+
+	// Migration Version: 2024-12-22-v4 - FINAL FIX (NO employee_id DROP NOT NULL!)
 	// Добавляем недостающие поля в существующие таблицы (только IF NOT EXISTS)
 	// НЕТ НИКАКИХ ALTER COLUMN DROP NOT NULL для ambulatory_cards!
-	log.Printf("INFO: [v3] Adding missing columns to tables if needed...")
+	log.Printf("INFO: [v4-FINAL] Adding missing columns to tables if needed...")
 
 	_, _ = tx.Exec(ctx, `ALTER TABLE employee_visits DROP COLUMN IF EXISTS route_sheet_id;`)
 	_, _ = tx.Exec(ctx, `ALTER TABLE employee_visits ADD COLUMN IF NOT EXISTS route_sheet JSONB DEFAULT '[]'::jsonb;`)
@@ -879,7 +958,8 @@ func listContractsHandler(w http.ResponseWriter, r *http.Request) {
 SELECT id, number, client_name, client_bin, client_signed,
        clinic_name, clinic_bin, clinic_signed,
        date, status, price, planned_headcount,
-       employees, documents, calendar_plan, client_sign_otp, clinic_sign_otp
+       employees, documents, calendar_plan, client_sign_otp, clinic_sign_otp,
+       final_act_content, health_plan_content, summary_report, named_lists
 FROM contracts
 WHERE client_bin = $1 OR clinic_bin = $1
 ORDER BY date DESC, id DESC
@@ -895,13 +975,15 @@ ORDER BY date DESC, id DESC
 	for rows.Next() {
 		var c Contract
 		var date time.Time
-		var employeesJSON, documentsJSON, cpJSON []byte
+		var employeesJSON, documentsJSON, cpJSON, summaryReportJSON, namedListsJSON []byte
+		var finalActContent, healthPlanContent *string
 		if err := rows.Scan(
 			&c.ID, &c.Number,
 			&c.ClientName, &c.ClientBIN, &c.ClientSigned,
 			&c.ClinicName, &c.ClinicBIN, &c.ClinicSigned,
 			&date, &c.Status, &c.Price, &c.PlannedHeadcount,
 			&employeesJSON, &documentsJSON, &cpJSON, &c.ClientSignOTP, &c.ClinicSignOTP,
+			&finalActContent, &healthPlanContent, &summaryReportJSON, &namedListsJSON,
 		); err != nil {
 			log.Printf("scan contract: %v", err)
 			continue
@@ -918,6 +1000,18 @@ ORDER BY date DESC, id DESC
 			if err := json.Unmarshal(cpJSON, &cp); err == nil {
 				c.CalendarPlan = &cp
 			}
+		}
+		if finalActContent != nil {
+			c.FinalActContent = finalActContent
+		}
+		if healthPlanContent != nil {
+			c.HealthPlanContent = healthPlanContent
+		}
+		if len(summaryReportJSON) > 0 {
+			c.SummaryReport = json.RawMessage(summaryReportJSON)
+		}
+		if len(namedListsJSON) > 0 {
+			c.NamedLists = json.RawMessage(namedListsJSON)
 		}
 		res = append(res, c)
 	}
@@ -1086,6 +1180,32 @@ func updateContractHandler(w http.ResponseWriter, r *http.Request) {
 			log.Printf("update number: %v", err)
 		}
 	}
+	if v, ok := patch["finalActContent"]; ok {
+		_, err = db.Exec(ctx, `UPDATE contracts SET final_act_content = $1 WHERE id = $2`, v, id)
+		if err != nil {
+			log.Printf("update finalActContent: %v", err)
+		}
+	}
+	if v, ok := patch["healthPlanContent"]; ok {
+		_, err = db.Exec(ctx, `UPDATE contracts SET health_plan_content = $1 WHERE id = $2`, v, id)
+		if err != nil {
+			log.Printf("update healthPlanContent: %v", err)
+		}
+	}
+	if v, ok := patch["summaryReport"]; ok {
+		b, _ := json.Marshal(v)
+		_, err = db.Exec(ctx, `UPDATE contracts SET summary_report = $1 WHERE id = $2`, b, id)
+		if err != nil {
+			log.Printf("update summaryReport: %v", err)
+		}
+	}
+	if v, ok := patch["namedLists"]; ok {
+		b, _ := json.Marshal(v)
+		_, err = db.Exec(ctx, `UPDATE contracts SET named_lists = $1 WHERE id = $2`, b, id)
+		if err != nil {
+			log.Printf("update namedLists: %v", err)
+		}
+	}
 
 	// Отправляем событие об обновлении контракта
 	// Получаем информацию о контракте для отправки
@@ -1132,14 +1252,16 @@ func getContractHandler(w http.ResponseWriter, r *http.Request) {
 SELECT id, number, client_name, client_bin, client_signed,
        clinic_name, clinic_bin, clinic_signed,
        date, status, price, planned_headcount,
-       employees, documents, calendar_plan, client_sign_otp, clinic_sign_otp
+       employees, documents, calendar_plan, client_sign_otp, clinic_sign_otp,
+       final_act_content, health_plan_content, summary_report, named_lists
 FROM contracts
 WHERE id = $1
 `, id)
 
 	var c Contract
 	var date time.Time
-	var employeesJSON, documentsJSON, cpJSON []byte
+	var employeesJSON, documentsJSON, cpJSON, summaryReportJSON, namedListsJSON []byte
+	var finalActContent, healthPlanContent *string
 	if err := row.Scan(
 		&c.ID, &c.Number,
 		&c.ClientName, &c.ClientBIN, &c.ClientSigned,
@@ -1147,6 +1269,7 @@ WHERE id = $1
 		&date, &c.Status, &c.Price, &c.PlannedHeadcount,
 		&employeesJSON, &documentsJSON, &cpJSON,
 		&c.ClientSignOTP, &c.ClinicSignOTP,
+		&finalActContent, &healthPlanContent, &summaryReportJSON, &namedListsJSON,
 	); err != nil {
 		log.Printf("getContract error: %v", err)
 		errorResponse(w, http.StatusNotFound, "contract not found")
@@ -1165,6 +1288,18 @@ WHERE id = $1
 		if err := json.Unmarshal(cpJSON, &cp); err == nil {
 			c.CalendarPlan = &cp
 		}
+	}
+	if finalActContent != nil {
+		c.FinalActContent = finalActContent
+	}
+	if healthPlanContent != nil {
+		c.HealthPlanContent = healthPlanContent
+	}
+	if len(summaryReportJSON) > 0 {
+		c.SummaryReport = json.RawMessage(summaryReportJSON)
+	}
+	if len(namedListsJSON) > 0 {
+		c.NamedLists = json.RawMessage(namedListsJSON)
 	}
 
 	jsonResponse(w, http.StatusOK, c)
@@ -1867,6 +2002,312 @@ func upsertAmbulatoryCardHandler(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// --- НОВЫЕ HANDLERS ДЛЯ РАСШИРЕННОГО ФУНКЦИОНАЛА ---
+
+// GET/POST /api/contracts/{id}/named-lists - Поименные списки (п.15 Приказа)
+func getNamedListsHandler(w http.ResponseWriter, r *http.Request) {
+	var id int64
+	_, err := fmt.Sscanf(r.URL.Path, "/api/contracts/%d/named-lists", &id)
+	if err != nil || id <= 0 {
+		errorResponse(w, http.StatusBadRequest, "invalid contract id")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	var namedListsJSON []byte
+	err = db.QueryRow(ctx, "SELECT named_lists FROM contracts WHERE id = $1", id).Scan(&namedListsJSON)
+	if err != nil {
+		jsonResponse(w, http.StatusOK, NamedLists{})
+		return
+	}
+
+	var lists NamedLists
+	if err := json.Unmarshal(namedListsJSON, &lists); err != nil {
+		jsonResponse(w, http.StatusOK, NamedLists{})
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, lists)
+}
+
+func updateNamedListsHandler(w http.ResponseWriter, r *http.Request) {
+	var id int64
+	_, err := fmt.Sscanf(r.URL.Path, "/api/contracts/%d/named-lists", &id)
+	if err != nil || id <= 0 {
+		errorResponse(w, http.StatusBadRequest, "invalid contract id")
+		return
+	}
+
+	var lists NamedLists
+	if err := json.NewDecoder(r.Body).Decode(&lists); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	listsJSON, _ := json.Marshal(lists)
+	_, err = db.Exec(ctx, "UPDATE contracts SET named_lists = $1 WHERE id = $2", listsJSON, id)
+	if err != nil {
+		log.Printf("updateNamedLists error: %v", err)
+		errorResponse(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// GET/POST /api/contracts/{id}/summary-report - Сводный отчет (п.17 Приказа)
+func getSummaryReportHandler(w http.ResponseWriter, r *http.Request) {
+	var id int64
+	_, err := fmt.Sscanf(r.URL.Path, "/api/contracts/%d/summary-report", &id)
+	if err != nil || id <= 0 {
+		errorResponse(w, http.StatusBadRequest, "invalid contract id")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	var reportJSON []byte
+	err = db.QueryRow(ctx, "SELECT summary_report FROM contracts WHERE id = $1", id).Scan(&reportJSON)
+	if err != nil {
+		jsonResponse(w, http.StatusOK, nil)
+		return
+	}
+
+	var report SummaryReport
+	if err := json.Unmarshal(reportJSON, &report); err != nil {
+		jsonResponse(w, http.StatusOK, nil)
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, report)
+}
+
+func createSummaryReportHandler(w http.ResponseWriter, r *http.Request) {
+	var id int64
+	_, err := fmt.Sscanf(r.URL.Path, "/api/contracts/%d/summary-report", &id)
+	if err != nil || id <= 0 {
+		errorResponse(w, http.StatusBadRequest, "invalid contract id")
+		return
+	}
+
+	var report SummaryReport
+	if err := json.NewDecoder(r.Body).Decode(&report); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	report.ContractID = id
+	report.ReportDate = time.Now().Format("2006-01-02")
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	reportJSON, _ := json.Marshal(report)
+	_, err = db.Exec(ctx, "UPDATE contracts SET summary_report = $1 WHERE id = $2", reportJSON, id)
+	if err != nil {
+		log.Printf("createSummaryReport error: %v", err)
+		errorResponse(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, report)
+}
+
+// GET/POST /api/contracts/{id}/emergency-notices - Экстренные извещения (п.19 Приказа)
+func listEmergencyNoticesHandler(w http.ResponseWriter, r *http.Request) {
+	var id int64
+	_, err := fmt.Sscanf(r.URL.Path, "/api/contracts/%d/emergency-notices", &id)
+	if err != nil || id <= 0 {
+		errorResponse(w, http.StatusBadRequest, "invalid contract id")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	rows, err := db.Query(ctx, "SELECT id, contract_id, employee_id, employee_name, disease_type, disease_name, sent_date, sent_to, status FROM emergency_notices WHERE contract_id = $1 ORDER BY sent_date DESC", id)
+	if err != nil {
+		log.Printf("listEmergencyNotices error: %v", err)
+		jsonResponse(w, http.StatusOK, []EmergencyNotice{})
+		return
+	}
+	defer rows.Close()
+
+	var notices []EmergencyNotice
+	for rows.Next() {
+		var n EmergencyNotice
+		err := rows.Scan(&n.ID, &n.ContractID, &n.EmployeeID, &n.EmployeeName, &n.DiseaseType, &n.DiseaseName, &n.SentDate, &n.SentTo, &n.Status)
+		if err != nil {
+			continue
+		}
+		notices = append(notices, n)
+	}
+
+	jsonResponse(w, http.StatusOK, notices)
+}
+
+func createEmergencyNoticeHandler(w http.ResponseWriter, r *http.Request) {
+	var id int64
+	_, err := fmt.Sscanf(r.URL.Path, "/api/contracts/%d/emergency-notices", &id)
+	if err != nil || id <= 0 {
+		errorResponse(w, http.StatusBadRequest, "invalid contract id")
+		return
+	}
+
+	var notice EmergencyNotice
+	if err := json.NewDecoder(r.Body).Decode(&notice); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	notice.ContractID = id
+	notice.SentDate = time.Now().Format("2006-01-02")
+	notice.Status = "sent"
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	var noticeID int64
+	err = db.QueryRow(ctx, `
+		INSERT INTO emergency_notices (contract_id, employee_id, employee_name, disease_type, disease_name, sent_date, sent_to, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id
+	`, notice.ContractID, notice.EmployeeID, notice.EmployeeName, notice.DiseaseType, notice.DiseaseName, notice.SentDate, notice.SentTo, notice.Status).Scan(&noticeID)
+	if err != nil {
+		log.Printf("createEmergencyNotice error: %v", err)
+		errorResponse(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	notice.ID = noticeID
+	jsonResponse(w, http.StatusCreated, notice)
+}
+
+// GET/POST /api/contracts/{id}/health-plan - План оздоровления (п.20 Приказа)
+func getHealthPlanHandler(w http.ResponseWriter, r *http.Request) {
+	var id int64
+	_, err := fmt.Sscanf(r.URL.Path, "/api/contracts/%d/health-plan", &id)
+	if err != nil || id <= 0 {
+		errorResponse(w, http.StatusBadRequest, "invalid contract id")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	var planContent *string
+	err = db.QueryRow(ctx, "SELECT health_plan_content FROM contracts WHERE id = $1", id).Scan(&planContent)
+	if err != nil {
+		jsonResponse(w, http.StatusOK, map[string]string{"content": ""})
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]string{"content": *planContent})
+}
+
+func updateHealthPlanHandler(w http.ResponseWriter, r *http.Request) {
+	var id int64
+	_, err := fmt.Sscanf(r.URL.Path, "/api/contracts/%d/health-plan", &id)
+	if err != nil || id <= 0 {
+		errorResponse(w, http.StatusBadRequest, "invalid contract id")
+		return
+	}
+
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	_, err = db.Exec(ctx, "UPDATE contracts SET health_plan_content = $1 WHERE id = $2", req.Content, id)
+	if err != nil {
+		log.Printf("updateHealthPlan error: %v", err)
+		errorResponse(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// POST /api/ambulatory-cards/transfer - Передача медицинских карт (п.18, п.123 Приказа)
+func transferAmbulatoryCardHandler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		PatientUID   string `json:"patientUid"`
+		IIN          string `json:"iin"`
+		TargetClinic string `json:"targetClinic"`
+		Reason       string `json:"reason"`
+		NewWorkplace string `json:"newWorkplace,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errorResponse(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	var card AmbulatoryCard
+	var general, medical, spec, labs, final, comm []byte
+	err := db.QueryRow(ctx, `
+		SELECT id, patient_uid, iin, general, medical, specialist_entries, lab_results, final_conclusion, communication, patient_instruction
+		FROM ambulatory_cards WHERE patient_uid = $1 OR iin = $2
+	`, req.PatientUID, req.IIN).Scan(
+		&card.ID, &card.PatientUID, &card.IIN, &general, &medical, &spec, &labs, &final, &comm, &card.Instr,
+	)
+	if err != nil {
+		errorResponse(w, http.StatusNotFound, "card not found")
+		return
+	}
+
+	card.General = json.RawMessage(general)
+	card.Medical = json.RawMessage(medical)
+	card.Spec = json.RawMessage(spec)
+	card.Labs = json.RawMessage(labs)
+	card.Final = json.RawMessage(final)
+	card.Comm = json.RawMessage(comm)
+
+	transferData := map[string]interface{}{
+		"fromClinic":   "current",
+		"toClinic":     req.TargetClinic,
+		"reason":       req.Reason,
+		"newWorkplace": req.NewWorkplace,
+		"transferDate": time.Now().Format("2006-01-02"),
+	}
+
+	var commData map[string]interface{}
+	if len(comm) > 0 {
+		json.Unmarshal(comm, &commData)
+	} else {
+		commData = make(map[string]interface{})
+	}
+	commData["transfer"] = transferData
+	commJSON, _ := json.Marshal(commData)
+
+	_, err = db.Exec(ctx, `UPDATE ambulatory_cards SET communication = $1, updated_at = NOW() WHERE id = $2`, commJSON, card.ID)
+	if err != nil {
+		log.Printf("transferAmbulatoryCard error: %v", err)
+		errorResponse(w, http.StatusInternalServerError, "db error")
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"status":   "transferred",
+		"transfer": transferData,
+		"card":     card,
+	})
+}
+
 // --- MAIN ---
 
 func main() {
@@ -1974,12 +2415,71 @@ func main() {
 		errorResponse(w, http.StatusNotFound, "not found")
 	})
 	mux.HandleFunc("/api/contracts/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		// /api/contracts/{id}/named-lists
+		if strings.Contains(path, "/named-lists") {
+			switch r.Method {
+			case http.MethodGet:
+				getNamedListsHandler(w, r)
+			case http.MethodPost, http.MethodPut:
+				updateNamedListsHandler(w, r)
+			default:
+				errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+			}
+			return
+		}
+		// /api/contracts/{id}/summary-report
+		if strings.Contains(path, "/summary-report") {
+			switch r.Method {
+			case http.MethodGet:
+				getSummaryReportHandler(w, r)
+			case http.MethodPost:
+				createSummaryReportHandler(w, r)
+			default:
+				errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+			}
+			return
+		}
+		// /api/contracts/{id}/emergency-notices
+		if strings.Contains(path, "/emergency-notices") {
+			switch r.Method {
+			case http.MethodGet:
+				listEmergencyNoticesHandler(w, r)
+			case http.MethodPost:
+				createEmergencyNoticeHandler(w, r)
+			default:
+				errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+			}
+			return
+		}
+		// /api/contracts/{id}/health-plan
+		if strings.Contains(path, "/health-plan") {
+			switch r.Method {
+			case http.MethodGet:
+				getHealthPlanHandler(w, r)
+			case http.MethodPost, http.MethodPut:
+				updateHealthPlanHandler(w, r)
+			default:
+				errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+			}
+			return
+		}
+		// /api/contracts/{id} - стандартный endpoint
 		if r.Method == http.MethodGet {
 			getContractHandler(w, r)
 			return
 		}
 		if r.Method == http.MethodPatch {
 			updateContractHandler(w, r)
+			return
+		}
+		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")
+	})
+
+	// Передача медицинских карт
+	mux.HandleFunc("/api/ambulatory-cards/transfer", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			transferAmbulatoryCardHandler(w, r)
 			return
 		}
 		errorResponse(w, http.StatusMethodNotAllowed, "method not allowed")

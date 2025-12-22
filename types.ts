@@ -207,6 +207,54 @@ export interface Contract {
   // Final Reports Content
   finalActContent?: string;
   healthPlanContent?: string;
+  
+  // Расширенный функционал
+  namedLists?: NamedLists; // Поименные списки (п.15)
+  summaryReport?: SummaryReport; // Сводный отчет (п.17)
+  emergencyNotices?: EmergencyNotice[]; // Экстренные извещения (п.19)
+}
+
+// Поименные списки для заключительного акта (п.15 Приказа)
+export interface NamedLists {
+  transferToOtherWork: string[]; // Перевод на другую работу
+  hospitalTreatment: string[]; // Стационарное лечение
+  sanatoriumTreatment: string[]; // Санаторно-курортное лечение
+  therapeuticNutrition: string[]; // Лечебно-профилактическое питание
+  dynamicObservation: string[]; // Динамическое наблюдение
+}
+
+// Экстренное извещение (п.19 Приказа)
+export interface EmergencyNotice {
+  id: number;
+  contractId: number;
+  employeeId: string;
+  employeeName: string;
+  diseaseType: 'infectious' | 'parasitic' | 'carrier';
+  diseaseName: string;
+  sentDate: string;
+  sentTo: string; // Территориальное подразделение
+  status: 'sent' | 'pending';
+}
+
+// Сводный отчет (п.17 Приказа, Приложение 2)
+export interface SummaryReport {
+  contractId: number;
+  reportDate: string;
+  totalEmployees: number;
+  examinedEmployees: number;
+  fitEmployees: number;
+  unfitEmployees: number;
+  observationEmployees: number;
+  categories: {
+    healthy?: number; // Здоровые работники
+    practicallyHealthy?: number; // Практически здоровые
+    initialDiseases?: number; // Начальные формы заболеваний
+    expressedDiseases?: number; // Выраженные формы заболеваний
+    harmfulFactors?: number; // Признаки воздействия вредных факторов
+    occupationalDiseases?: number; // Признаки профессиональных заболеваний
+  };
+  sentDate?: string;
+  sentTo?: string;
 }
 
 export interface Doctor {

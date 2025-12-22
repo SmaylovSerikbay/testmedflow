@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { Contract, UserProfile, Employee, ContractDocument } from '../types';
+import { Contract, UserProfile, Employee, ContractDocument, NamedLists, SummaryReport, EmergencyNotice } from '../types';
 import { LoaderIcon, PenIcon, CalendarIcon, CheckShieldIcon, FileTextIcon, FileSignatureIcon, UserMdIcon } from './Icons';
 import { FactorRule } from '../factorRules';
 import { resolveFactorRules, personalizeResearch } from '../utils/medicalRules';
@@ -636,6 +636,11 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
   });
   const [isSavingReport, setIsSavingReport] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<ContractDocument | null>(null);
+  
+  // Новые модальные окна для расширенного функционала
+  const [isNamedListsModalOpen, setIsNamedListsModalOpen] = useState(false);
+  const [isSummaryReportModalOpen, setIsSummaryReportModalOpen] = useState(false);
+  const [isEmergencyNoticesModalOpen, setIsEmergencyNoticesModalOpen] = useState(false);
 
   const documents = contract.documents || [];
   
@@ -696,13 +701,63 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
     }
   }, [contract, employees, doctors, currentUser, updateContract, showToast]);
 
-  const handleGenerateReports = useCallback(() => {
+  const handleGenerateReports = useCallback(async () => {
     if (!contract) return;
 
     const total = employees.length;
     const fit = employees.filter(e => e.status === 'fit').length;
     const unfit = employees.filter(e => e.status === 'unfit').length;
     const observation = employees.filter(e => e.status === 'needs_observation').length;
+    
+    // Загружаем поименные списки, если они есть
+    let namedLists: NamedLists | null = null;
+    try {
+      const { apiGetNamedLists } = await import('../services/api');
+      namedLists = await apiGetNamedLists(Number(contract.id));
+    } catch (e) {
+      // Игнорируем ошибку, если списков еще нет
+    }
+    
+    // Формируем поименные списки из данных сотрудников
+    const transferList = namedLists?.transferToOtherWork || [];
+    const hospitalList = namedLists?.hospitalTreatment || [];
+    const sanatoriumList = namedLists?.sanatoriumTreatment || [];
+    const nutritionList = namedLists?.therapeuticNutrition || [];
+    const observationList = namedLists?.dynamicObservation || [];
+    
+    // Если списки пустые, заполняем на основе статусов сотрудников
+    if (transferList.length === 0 && hospitalList.length === 0 && sanatoriumList.length === 0) {
+      const unfitEmployees = employees.filter(e => e.status === 'unfit').map(e => `${e.name} (${e.position})`);
+      const observationEmployees = employees.filter(e => e.status === 'needs_observation').map(e => `${e.name} (${e.position})`);
+      
+      // Автоматическое распределение по категориям
+      if (unfitEmployees.length > 0) {
+        transferList.push(...unfitEmployees.slice(0, Math.ceil(unfitEmployees.length / 2)));
+        hospitalList.push(...unfitEmployees.slice(Math.ceil(unfitEmployees.length / 2)));
+      }
+      if (observationEmployees.length > 0) {
+        observationList.push(...observationEmployees);
+      }
+    }
+    
+    const namedListsSection = `
+ПОИМЕННЫЕ СПИСКИ (п.15 Приказа):
+
+1. Лица, которым рекомендован перевод на другую работу:
+${transferList.length > 0 ? transferList.map((name, i) => `   ${i+1}. ${name}`).join('\n') : '   (нет)'}
+
+2. Лица, которым показано стационарное лечение:
+${hospitalList.length > 0 ? hospitalList.map((name, i) => `   ${i+1}. ${name}`).join('\n') : '   (нет)'}
+
+3. Лица, которым показано санаторно-курортное лечение:
+${sanatoriumList.length > 0 ? sanatoriumList.map((name, i) => `   ${i+1}. ${name}`).join('\n') : '   (нет)'}
+
+4. Лица, которым показано лечебно-профилактическое питание:
+${nutritionList.length > 0 ? nutritionList.map((name, i) => `   ${i+1}. ${name}`).join('\n') : '   (нет)'}
+
+5. Лица, которым показано динамическое наблюдение:
+${observationList.length > 0 ? observationList.map((name, i) => `   ${i+1}. ${name}`).join('\n') : '   (нет)'}
+`;
     
     const actTemplate = `ЗАКЛЮЧИТЕЛЬНЫЙ АКТ
 по результатам проведенного периодического медицинского осмотра работников ${contract.clientName}
@@ -716,11 +771,19 @@ export const DocumentsSection: React.FC<DocumentsSectionProps> = ({
    - Нуждаются в дообследовании (в т.ч. в условиях стационара): ${observation}
    - Выявлено лиц с общими заболеваниями, являющимися противопоказаниями к работе: ${unfit}
 
-5. Результаты выполнения плана оздоровления за предыдущий год: 
+${namedListsSection}
+
+6. Результаты выполнения плана оздоровления за предыдущий год: 
    - Выполнено: 100%
 
 Председатель врачебной комиссии: ____________________
-М.П.                                  (Дата)`;
+Руководитель медицинской организации: ____________________
+М.П.                                  (Дата)
+
+Экземпляры направлены:
+- Администрации организации (предприятия)
+- Территориальным подразделениям ведомства государственного органа в сфере санитарно-эпидемиологического благополучия населения
+- Один экземпляр остается в медицинской организации`;
 
     const obsEmployees = employees.filter(e => e.status === 'needs_observation' || e.status === 'unfit');
     const obsList = obsEmployees.length > 0 
@@ -736,22 +799,23 @@ ${obsList}
 РАСПРЕДЕЛЕНИЕ ПО ВИДАМ ОЗДОРОВЛЕНИЯ (Пункт 21):
 
 1. Стационарное обследование и лечение:
-   (Заполните ФИО)
+${hospitalList.length > 0 ? hospitalList.map((name, i) => `   ${i+1}. ${name}`).join('\n') : '   (Заполните ФИО)'}
 
 2. Амбулаторное обследование и лечение:
    (Заполните ФИО)
 
 3. Санаторно-курортное лечение:
-   (Заполните ФИО)
+${sanatoriumList.length > 0 ? sanatoriumList.map((name, i) => `   ${i+1}. ${name}`).join('\n') : '   (Заполните ФИО)'}
 
 4. Лечебно-профилактическое питание:
-   (Заполните ФИО)
+${nutritionList.length > 0 ? nutritionList.map((name, i) => `   ${i+1}. ${name}`).join('\n') : '   (Заполните ФИО)'}
 
 5. Временный перевод на другую работу по состоянию здоровья:
-   (Заполните ФИО)
+${transferList.length > 0 ? transferList.map((name, i) => `   ${i+1}. ${name}`).join('\n') : '   (Заполните ФИО)'}
 
 Врач-профпатолог: ____________________
-Представитель работодателя: ____________________`;
+Представитель работодателя: ____________________
+Согласовано с территориальным подразделением: ____________________`;
 
     setReportForm({ 
       finalAct: contract.finalActContent || actTemplate, 
@@ -786,6 +850,25 @@ ${obsList}
         });
       }
 
+      // Сохраняем поименные списки
+      const { apiUpdateNamedLists } = await import('../services/api');
+      const unfitEmployees = employees.filter(e => e.status === 'unfit').map(e => `${e.name} (${e.position})`);
+      const observationEmployees = employees.filter(e => e.status === 'needs_observation').map(e => `${e.name} (${e.position})`);
+      
+      const namedLists: NamedLists = {
+        transferToOtherWork: unfitEmployees.slice(0, Math.ceil(unfitEmployees.length / 2)),
+        hospitalTreatment: unfitEmployees.slice(Math.ceil(unfitEmployees.length / 2)),
+        sanatoriumTreatment: [],
+        therapeuticNutrition: [],
+        dynamicObservation: observationEmployees
+      };
+      
+      try {
+        await apiUpdateNamedLists(Number(contract.id), namedLists);
+      } catch (e) {
+        console.warn('Failed to save named lists:', e);
+      }
+
       await updateContract(contract.id, {
         finalActContent: reportForm.finalAct,
         healthPlanContent: reportForm.healthPlan,
@@ -799,7 +882,7 @@ ${obsList}
     } finally {
       setIsSavingReport(false);
     }
-  }, [contract.id, documents, reportForm, updateContract, showToast]);
+  }, [contract.id, documents, reportForm, employees, updateContract, showToast]);
 
   const handlePreviewDocument = useCallback((doc: ContractDocument) => {
     // Показываем модальное окно для просмотра на сайте
@@ -1233,7 +1316,7 @@ ${obsList}
             <FileTextIcon className="w-5 h-5" />
             Документы
           </h3>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             {employees.length > 0 && currentUser?.role === 'clinic' && (
               <button
                 onClick={handleGenerateRouteSheetsAndOrder}
@@ -1245,13 +1328,36 @@ ${obsList}
               </button>
             )}
             {currentUser?.role === 'clinic' && isExamFinished && (
-              <button
-                onClick={handleGenerateReports}
-                className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 transition-all flex items-center gap-1"
-              >
-                <FileTextIcon className="w-3 h-3" />
-                Сформировать отчеты
-              </button>
+              <>
+                <button
+                  onClick={handleGenerateReports}
+                  className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 transition-all flex items-center gap-1"
+                >
+                  <FileTextIcon className="w-3 h-3" />
+                  Сформировать отчеты
+                </button>
+                <button
+                  onClick={() => setIsNamedListsModalOpen(true)}
+                  className="px-3 py-1.5 bg-purple-600 text-white rounded-lg text-xs font-bold hover:bg-purple-700 transition-all flex items-center gap-1"
+                  title="Управление поименными списками (п.15)"
+                >
+                  Поименные списки
+                </button>
+                <button
+                  onClick={() => setIsSummaryReportModalOpen(true)}
+                  className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 transition-all flex items-center gap-1"
+                  title="Сводный отчет (п.17)"
+                >
+                  Сводный отчет
+                </button>
+                <button
+                  onClick={() => setIsEmergencyNoticesModalOpen(true)}
+                  className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-bold hover:bg-red-700 transition-all flex items-center gap-1"
+                  title="Экстренные извещения (п.19)"
+                >
+                  Экстренные извещения
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -1387,6 +1493,36 @@ ${obsList}
           isSavingReport={isSavingReport}
           onClose={() => setIsReportModalOpen(false)}
           onSave={handleSaveReports}
+        />
+      )}
+
+      {/* Named Lists Modal - Поименные списки (п.15) */}
+      {isNamedListsModalOpen && contract && (
+        <NamedListsModal
+          contract={contract}
+          employees={employees}
+          onClose={() => setIsNamedListsModalOpen(false)}
+          showToast={showToast}
+        />
+      )}
+
+      {/* Summary Report Modal - Сводный отчет (п.17) */}
+      {isSummaryReportModalOpen && contract && (
+        <SummaryReportModal
+          contract={contract}
+          employees={employees}
+          onClose={() => setIsSummaryReportModalOpen(false)}
+          showToast={showToast}
+        />
+      )}
+
+      {/* Emergency Notices Modal - Экстренные извещения (п.19) */}
+      {isEmergencyNoticesModalOpen && contract && (
+        <EmergencyNoticesModal
+          contract={contract}
+          employees={employees}
+          onClose={() => setIsEmergencyNoticesModalOpen(false)}
+          showToast={showToast}
         />
       )}
     </>
@@ -1732,3 +1868,501 @@ const FinalReportsModal: React.FC<FinalReportsModalProps> = ({
     </div>
   </div>
 );
+
+// --- НОВЫЕ МОДАЛЬНЫЕ ОКНА ДЛЯ РАСШИРЕННОГО ФУНКЦИОНАЛА ---
+
+// Поименные списки (п.15 Приказа)
+interface NamedListsModalProps {
+  contract: Contract;
+  employees: Employee[];
+  onClose: () => void;
+  showToast: (type: 'success' | 'error' | 'info', message: string) => void;
+}
+
+const NamedListsModal: React.FC<NamedListsModalProps> = ({ contract, employees, onClose, showToast }) => {
+  const [lists, setLists] = React.useState<NamedLists>({
+    transferToOtherWork: [],
+    hospitalTreatment: [],
+    sanatoriumTreatment: [],
+    therapeuticNutrition: [],
+    dynamicObservation: []
+  });
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [isSaving, setIsSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    const loadLists = async () => {
+      try {
+        const { apiGetNamedLists } = await import('../services/api');
+        const data = await apiGetNamedLists(Number(contract.id));
+        setLists(data);
+      } catch (e) {
+        const unfitEmployees = employees.filter(e => e.status === 'unfit').map(e => `${e.name} (${e.position})`);
+        const observationEmployees = employees.filter(e => e.status === 'needs_observation').map(e => `${e.name} (${e.position})`);
+        setLists({
+          transferToOtherWork: unfitEmployees.slice(0, Math.ceil(unfitEmployees.length / 2)),
+          hospitalTreatment: unfitEmployees.slice(Math.ceil(unfitEmployees.length / 2)),
+          sanatoriumTreatment: [],
+          therapeuticNutrition: [],
+          dynamicObservation: observationEmployees
+        });
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    loadLists();
+  }, [contract.id, employees]);
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      const { apiUpdateNamedLists } = await import('../services/api');
+      await apiUpdateNamedLists(Number(contract.id), lists);
+      showToast('success', 'Поименные списки сохранены');
+      onClose();
+    } catch (e) {
+      showToast('error', 'Ошибка сохранения поименных списков');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const addEmployee = (category: keyof NamedLists, employeeName: string) => {
+    if (employeeName.trim()) {
+      setLists(prev => ({
+        ...prev,
+        [category]: [...prev[category], employeeName.trim()]
+      }));
+    }
+  };
+
+  const removeEmployee = (category: keyof NamedLists, index: number) => {
+    setLists(prev => ({
+      ...prev,
+      [category]: prev[category].filter((_, i) => i !== index)
+    }));
+  };
+
+  const categoryLabels: Record<keyof NamedLists, string> = {
+    transferToOtherWork: '1. Перевод на другую работу',
+    hospitalTreatment: '2. Стационарное лечение',
+    sanatoriumTreatment: '3. Санаторно-курортное лечение',
+    therapeuticNutrition: '4. Лечебно-профилактическое питание',
+    dynamicObservation: '5. Динамическое наблюдение'
+  };
+
+  if (isLoading) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={onClose} />
+        <div className="relative bg-white rounded-3xl shadow-2xl p-8">
+          <LoaderIcon className="w-8 h-8 animate-spin text-blue-600" />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+          <h3 className="text-xl font-bold">Поименные списки (п.15 Приказа)</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-900">✕</button>
+        </div>
+        
+        <div className="flex-1 overflow-auto p-6 space-y-6">
+          {(Object.keys(categoryLabels) as Array<keyof NamedLists>).map(category => (
+            <div key={category} className="border border-slate-200 rounded-xl p-4">
+              <h4 className="font-bold text-slate-900 mb-3">{categoryLabels[category]}</h4>
+              <div className="space-y-2">
+                {lists[category].map((name, idx) => (
+                  <div key={idx} className="flex items-center justify-between p-2 bg-slate-50 rounded-lg">
+                    <span className="text-sm">{name}</span>
+                    <button
+                      onClick={() => removeEmployee(category, idx)}
+                      className="text-red-600 hover:text-red-800 text-xs px-2 py-1"
+                    >
+                      Удалить
+                    </button>
+                  </div>
+                ))}
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Добавить ФИО сотрудника"
+                    className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter') {
+                        addEmployee(category, e.currentTarget.value);
+                        e.currentTarget.value = '';
+                      }
+                    }}
+                  />
+                  <button
+                    onClick={(e) => {
+                      const input = e.currentTarget.previousElementSibling as HTMLInputElement;
+                      addEmployee(category, input.value);
+                      input.value = '';
+                    }}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700"
+                  >
+                    Добавить
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="p-6 border-t border-slate-100 flex justify-end gap-3 bg-slate-50">
+          <button onClick={onClose} className="px-6 py-2 text-slate-600 hover:bg-slate-100 rounded-lg">
+            Отмена
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={isSaving}
+            className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 flex items-center gap-2"
+          >
+            {isSaving ? <LoaderIcon className="w-4 h-4 animate-spin"/> : 'Сохранить'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Сводный отчет (п.17 Приказа)
+interface SummaryReportModalProps {
+  contract: Contract;
+  employees: Employee[];
+  onClose: () => void;
+  showToast: (type: 'success' | 'error' | 'info', message: string) => void;
+}
+
+const SummaryReportModal: React.FC<SummaryReportModalProps> = ({ contract, employees, onClose, showToast }) => {
+  const [report, setReport] = React.useState<Omit<SummaryReport, 'contractId' | 'reportDate'>>({
+    totalEmployees: employees.length,
+    examinedEmployees: employees.filter(e => e.status !== 'pending').length,
+    fitEmployees: employees.filter(e => e.status === 'fit').length,
+    unfitEmployees: employees.filter(e => e.status === 'unfit').length,
+    observationEmployees: employees.filter(e => e.status === 'needs_observation').length,
+    categories: {
+      healthy: 0,
+      practicallyHealthy: 0,
+      initialDiseases: 0,
+      expressedDiseases: 0,
+      harmfulFactors: 0,
+      occupationalDiseases: 0
+    },
+    sentTo: ''
+  });
+  const [isSaving, setIsSaving] = React.useState(false);
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      const { apiCreateSummaryReport } = await import('../services/api');
+      await apiCreateSummaryReport(Number(contract.id), report);
+      showToast('success', 'Сводный отчет сохранен');
+      onClose();
+    } catch (e) {
+      showToast('error', 'Ошибка сохранения сводного отчета');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-white rounded-3xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+          <h3 className="text-xl font-bold">Сводный отчет (п.17 Приказа)</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-900">✕</button>
+        </div>
+        
+        <div className="flex-1 overflow-auto p-6 space-y-6">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold uppercase text-slate-400 mb-2">Всего работников</label>
+              <input
+                type="number"
+                value={report.totalEmployees}
+                onChange={(e) => setReport(prev => ({ ...prev, totalEmployees: parseInt(e.target.value) || 0 }))}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold uppercase text-slate-400 mb-2">Осмотрено</label>
+              <input
+                type="number"
+                value={report.examinedEmployees}
+                onChange={(e) => setReport(prev => ({ ...prev, examinedEmployees: parseInt(e.target.value) || 0 }))}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold uppercase text-slate-400 mb-2">Годны</label>
+              <input
+                type="number"
+                value={report.fitEmployees}
+                onChange={(e) => setReport(prev => ({ ...prev, fitEmployees: parseInt(e.target.value) || 0 }))}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold uppercase text-slate-400 mb-2">Не годны</label>
+              <input
+                type="number"
+                value={report.unfitEmployees}
+                onChange={(e) => setReport(prev => ({ ...prev, unfitEmployees: parseInt(e.target.value) || 0 }))}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold uppercase text-slate-400 mb-2">Классификация по п.21</label>
+            <div className="grid grid-cols-2 gap-3">
+              {Object.entries({
+                healthy: 'Здоровые работники',
+                practicallyHealthy: 'Практически здоровые',
+                initialDiseases: 'Начальные формы заболеваний',
+                expressedDiseases: 'Выраженные формы заболеваний',
+                harmfulFactors: 'Признаки воздействия вредных факторов',
+                occupationalDiseases: 'Признаки профессиональных заболеваний'
+              }).map(([key, label]) => (
+                <div key={key}>
+                  <label className="block text-sm text-slate-700 mb-1">{label}</label>
+                  <input
+                    type="number"
+                    value={report.categories[key as keyof typeof report.categories] || 0}
+                    onChange={(e) => setReport(prev => ({
+                      ...prev,
+                      categories: { ...prev.categories, [key]: parseInt(e.target.value) || 0 }
+                    }))}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold uppercase text-slate-400 mb-2">Отправлено в</label>
+            <input
+              type="text"
+              value={report.sentTo}
+              onChange={(e) => setReport(prev => ({ ...prev, sentTo: e.target.value }))}
+              placeholder="Территориальное подразделение"
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg"
+            />
+          </div>
+        </div>
+
+        <div className="p-6 border-t border-slate-100 flex justify-end gap-3 bg-slate-50">
+          <button onClick={onClose} className="px-6 py-2 text-slate-600 hover:bg-slate-100 rounded-lg">
+            Отмена
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={isSaving}
+            className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 flex items-center gap-2"
+          >
+            {isSaving ? <LoaderIcon className="w-4 h-4 animate-spin"/> : 'Сохранить и отправить'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Экстренные извещения (п.19 Приказа)
+interface EmergencyNoticesModalProps {
+  contract: Contract;
+  employees: Employee[];
+  onClose: () => void;
+  showToast: (type: 'success' | 'error' | 'info', message: string) => void;
+}
+
+const EmergencyNoticesModal: React.FC<EmergencyNoticesModalProps> = ({ contract, employees, onClose, showToast }) => {
+  const [notices, setNotices] = React.useState<EmergencyNotice[]>([]);
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [isCreating, setIsCreating] = React.useState(false);
+  const [newNotice, setNewNotice] = React.useState({
+    employeeId: '',
+    employeeName: '',
+    diseaseType: 'infectious' as 'infectious' | 'parasitic' | 'carrier',
+    diseaseName: '',
+    sentTo: ''
+  });
+
+  React.useEffect(() => {
+    const loadNotices = async () => {
+      try {
+        const { apiListEmergencyNotices } = await import('../services/api');
+        const data = await apiListEmergencyNotices(Number(contract.id));
+        setNotices(data);
+      } catch (e) {
+        console.error('Failed to load emergency notices:', e);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    loadNotices();
+  }, [contract.id]);
+
+  const handleCreate = async () => {
+    if (!newNotice.employeeId || !newNotice.diseaseName || !newNotice.sentTo) {
+      showToast('error', 'Заполните все обязательные поля');
+      return;
+    }
+    setIsCreating(true);
+    try {
+      const { apiCreateEmergencyNotice } = await import('../services/api');
+      const notice = await apiCreateEmergencyNotice(Number(contract.id), newNotice);
+      setNotices(prev => [notice, ...prev]);
+      setNewNotice({
+        employeeId: '',
+        employeeName: '',
+        diseaseType: 'infectious',
+        diseaseName: '',
+        sentTo: ''
+      });
+      showToast('success', 'Экстренное извещение создано');
+    } catch (e) {
+      showToast('error', 'Ошибка создания экстренного извещения');
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={onClose} />
+        <div className="relative bg-white rounded-3xl shadow-2xl p-8">
+          <LoaderIcon className="w-8 h-8 animate-spin text-blue-600" />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+          <h3 className="text-xl font-bold">Экстренные извещения (п.19 Приказа)</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-900">✕</button>
+        </div>
+        
+        <div className="flex-1 overflow-auto p-6 space-y-6">
+          <div className="border border-slate-200 rounded-xl p-4 bg-slate-50">
+            <h4 className="font-bold text-slate-900 mb-4">Создать новое извещение</h4>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold uppercase text-slate-400 mb-2">ИИН сотрудника</label>
+                <input
+                  type="text"
+                  value={newNotice.employeeId}
+                  onChange={(e) => {
+                    const employee = employees.find(emp => emp.id === e.target.value);
+                    setNewNotice(prev => ({
+                      ...prev,
+                      employeeId: e.target.value,
+                      employeeName: employee ? employee.name : prev.employeeName
+                    }));
+                  }}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase text-slate-400 mb-2">ФИО сотрудника</label>
+                <input
+                  type="text"
+                  value={newNotice.employeeName}
+                  onChange={(e) => setNewNotice(prev => ({ ...prev, employeeName: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase text-slate-400 mb-2">Тип заболевания</label>
+                <select
+                  value={newNotice.diseaseType}
+                  onChange={(e) => setNewNotice(prev => ({ ...prev, diseaseType: e.target.value as any }))}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg"
+                >
+                  <option value="infectious">Инфекционное заболевание</option>
+                  <option value="parasitic">Паразитарное заболевание</option>
+                  <option value="carrier">Носительство возбудителей</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold uppercase text-slate-400 mb-2">Название заболевания</label>
+                <input
+                  type="text"
+                  value={newNotice.diseaseName}
+                  onChange={(e) => setNewNotice(prev => ({ ...prev, diseaseName: e.target.value }))}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg"
+                />
+              </div>
+              <div className="col-span-2">
+                <label className="block text-xs font-bold uppercase text-slate-400 mb-2">Отправлено в</label>
+                <input
+                  type="text"
+                  value={newNotice.sentTo}
+                  onChange={(e) => setNewNotice(prev => ({ ...prev, sentTo: e.target.value }))}
+                  placeholder="Территориальное подразделение"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg"
+                />
+              </div>
+            </div>
+            <button
+              onClick={handleCreate}
+              disabled={isCreating}
+              className="mt-4 px-6 py-2 bg-red-600 text-white rounded-lg font-bold hover:bg-red-700 flex items-center gap-2"
+            >
+              {isCreating ? <LoaderIcon className="w-4 h-4 animate-spin"/> : 'Создать извещение'}
+            </button>
+          </div>
+
+          <div>
+            <h4 className="font-bold text-slate-900 mb-4">Отправленные извещения</h4>
+            {notices.length === 0 ? (
+              <p className="text-slate-400 text-sm">Нет отправленных извещений</p>
+            ) : (
+              <div className="space-y-2">
+                {notices.map(notice => (
+                  <div key={notice.id} className="border border-slate-200 rounded-lg p-4">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="font-bold text-slate-900">{notice.employeeName}</p>
+                        <p className="text-sm text-slate-600">ИИН: {notice.employeeId}</p>
+                        <p className="text-sm text-slate-600">Заболевание: {notice.diseaseName} ({notice.diseaseType === 'infectious' ? 'Инфекционное' : notice.diseaseType === 'parasitic' ? 'Паразитарное' : 'Носительство'})</p>
+                        <p className="text-sm text-slate-600">Отправлено в: {notice.sentTo}</p>
+                        <p className="text-xs text-slate-500">Дата: {notice.sentDate}</p>
+                      </div>
+                      <span className={`px-2 py-1 rounded text-xs font-bold ${
+                        notice.status === 'sent' ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'
+                      }`}>
+                        {notice.status === 'sent' ? 'Отправлено' : 'Ожидает'}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="p-6 border-t border-slate-100 flex justify-end bg-slate-50">
+          <button onClick={onClose} className="px-6 py-2 bg-slate-600 text-white rounded-lg font-bold hover:bg-slate-700">
+            Закрыть
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};

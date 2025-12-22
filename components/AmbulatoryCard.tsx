@@ -92,10 +92,13 @@ const AmbulatoryCard: React.FC<AmbulatoryCardProps> = ({
     }
   }, [initialMode, currentSpecialty]);
 
-  // Specialties list for the UI
+  // Specialties list for the UI (расширенный список согласно п.14 Приказа)
   const SPECIALTIES = [
     'Терапевт', 'Хирург', 'Невропатолог', 'Оториноларинголог', 
-    'Офтальмолог', 'Дерматовенеролог', 'Гинеколог', 'Психиатр', 'Нарколог'
+    'Офтальмолог', 'Дерматовенеролог', 'Гинеколог', 'Психиатр', 'Нарколог',
+    'Рентгенолог', 'Врач по функциональной диагностике', 'Врач-лаборант',
+    'Стоматолог', 'Кардиолог', 'Аллерголог', 'Эндокринолог', 'Фтизиатр', 'Гематолог',
+    'Профпатолог' // Председатель комиссии
   ];
 
   // Can this specific user edit this card?
@@ -1077,6 +1080,35 @@ const AmbulatoryCard: React.FC<AmbulatoryCardProps> = ({
                 onChange={(val: string) => setCard({...card, finalConclusion: {...(card.finalConclusion || { chairmanName: '', date: new Date().toISOString(), healthGroup: 'I', isFit: true, nextExamDate: '' }), restrictions: val}})}
                 placeholder="Укажите ограничения по труду, если есть..."
               />
+
+              <div className="space-y-4">
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">
+                  Классификация работника (п.21 Приказа)
+                </label>
+                <div className="grid grid-cols-1 gap-2">
+                  {[
+                    { id: 'healthy', label: '1. Здоровые работники, не нуждающиеся в реабилитации', color: 'emerald' },
+                    { id: 'practically_healthy', label: '2. Практически здоровые работники, имеющие нестойкие функциональные изменения', color: 'blue' },
+                    { id: 'initial_diseases', label: '3. Работники, имеющие начальные формы общих заболеваний', color: 'amber' },
+                    { id: 'expressed_diseases', label: '4. Работники, имеющие выраженные формы общих заболеваний', color: 'orange' },
+                    { id: 'harmful_factors', label: '5. Работники, имеющие признаки воздействия на организм вредных производственных факторов', color: 'red' },
+                    { id: 'occupational_diseases', label: '6. Работники, имеющие признаки профессиональных заболеваний', color: 'red' }
+                  ].map(category => (
+                    <button
+                      key={category.id}
+                      disabled={mode === 'view'}
+                      onClick={() => setCard({...card, finalConclusion: {...(card.finalConclusion || { chairmanName: '', date: new Date().toISOString(), healthGroup: 'I', isFit: true, nextExamDate: '' }), workerCategory: category.id as any}})}
+                      className={`text-left p-4 rounded-xl font-medium text-sm transition-all border-2 ${
+                        card.finalConclusion?.workerCategory === category.id
+                          ? `bg-${category.color}-50 border-${category.color}-300 text-${category.color}-900`
+                          : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'
+                      }`}
+                    >
+                      {category.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         )}
