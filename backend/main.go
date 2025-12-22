@@ -327,6 +327,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		userID = r.Header.Get("X-User-ID")
 	}
 	if userID == "" {
+		log.Printf("WebSocket: no userId provided, closing connection")
 		conn.Close()
 		return
 	}
@@ -337,11 +338,25 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 
 	var role UserRole
 	var bin *string
-	err = db.QueryRow(ctx, "SELECT role, bin FROM users WHERE id = $1", userID).Scan(&role, &bin)
+	var foundID string
+
+	// Сначала пытаемся найти по id (uid)
+	err = db.QueryRow(ctx, "SELECT id, role, bin FROM users WHERE id = $1", userID).Scan(&foundID, &role, &bin)
 	if err != nil {
-		log.Printf("Error getting user for WebSocket: %v", err)
-		conn.Close()
-		return
+		// Если не нашли по id, пробуем найти по phone (на случай если передали phone вместо uid)
+		err2 := db.QueryRow(ctx, "SELECT id, role, bin FROM users WHERE phone = $1", userID).Scan(&foundID, &role, &bin)
+		if err2 != nil {
+			// Пользователь не найден - это нормально, если он ещё не зарегистрирован
+			// Не логируем как ошибку, просто закрываем соединение тихо
+			// (это может быть попытка подключения до регистрации или несуществующий пользователь)
+			conn.Close()
+			return
+		}
+		// Используем найденный ID вместо переданного
+		userID = foundID
+	} else {
+		// Используем найденный ID (может отличаться от переданного)
+		userID = foundID
 	}
 
 	client := &Client{
@@ -1542,10 +1557,68 @@ func createVisitHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. Отправляем уведомления через WebSocket
+	// Уведомляем клинику
 	broadcastToUser(in.ClinicID, "visit_started", map[string]interface{}{
 		"visitId":    visitID,
 		"employeeId": in.EmployeeID,
 	})
+
+	// Уведомляем всех врачей, которые есть в маршрутном листе
+	var routeSheetData []map[string]interface{}
+	if err := json.Unmarshal(in.RouteSheet, &routeSheetData); err == nil {
+		doctorIDs := make(map[string]bool) // Используем map для уникальности
+
+		for _, step := range routeSheetData {
+			// Если это шаг с врачом, получаем его ID
+			if stepType, ok := step["type"].(string); ok && stepType == "doctor" {
+				if doctorID, hasDoctorID := step["doctorId"]; hasDoctorID && doctorID != nil {
+					// Преобразуем doctorId в строку (может быть число или строка)
+					doctorIDStr := fmt.Sprintf("%v", doctorID)
+					doctorIDs[doctorIDStr] = true
+				}
+			}
+		}
+
+		// Находим пользователей-врачей по их ID из таблицы doctors
+		for doctorIDStr := range doctorIDs {
+			var doctorUID string
+			var doctorPhone *string
+			// Преобразуем строку в число для запроса
+			var doctorIDInt int64
+			if _, err := fmt.Sscanf(doctorIDStr, "%d", &doctorIDInt); err == nil {
+				err := db.QueryRow(ctx, "SELECT clinic_uid, phone FROM doctors WHERE id = $1", doctorIDInt).Scan(&doctorUID, &doctorPhone)
+				if err == nil {
+					// Находим пользователя-врача по телефону
+					if doctorPhone != nil && *doctorPhone != "" {
+						var userID string
+						err2 := db.QueryRow(ctx, "SELECT id FROM users WHERE phone = $1 AND role = 'doctor' LIMIT 1", *doctorPhone).Scan(&userID)
+						if err2 == nil && userID != "" {
+							broadcastToUser(userID, "visit_started", map[string]interface{}{
+								"visitId":      visitID,
+								"employeeId":   in.EmployeeID,
+								"employeeName": in.EmployeeName,
+							})
+							log.Printf("DEBUG createVisit: Notified doctor %s (userID=%s) about visit %d", doctorIDStr, userID, visitID)
+						} else {
+							log.Printf("DEBUG createVisit: Could not find user for doctor %s (phone=%v, err=%v)", doctorIDStr, doctorPhone, err2)
+						}
+					}
+				} else {
+					log.Printf("DEBUG createVisit: Could not find doctor %s in doctors table (err=%v)", doctorIDStr, err)
+				}
+			} else {
+				log.Printf("DEBUG createVisit: Could not parse doctorID %s as integer", doctorIDStr)
+			}
+		}
+
+		// Также уведомляем всех врачей клиники через broadcastToRole (на случай если не нашли по doctorId)
+		broadcastToRole(UserRoleDoctor, "visit_started", map[string]interface{}{
+			"visitId":      visitID,
+			"employeeId":   in.EmployeeID,
+			"employeeName": in.EmployeeName,
+			"clinicId":     in.ClinicID,
+		})
+	}
 
 	jsonResponse(w, http.StatusCreated, map[string]interface{}{"id": visitID})
 }
@@ -1659,6 +1732,13 @@ func listVisitsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			found := false
 
+			// Пытаемся преобразовать doctorID в число (это может быть ID врача из таблицы doctors)
+			var doctorIDInt int64
+			isNumericID := false
+			if _, err := fmt.Sscanf(doctorID, "%d", &doctorIDInt); err == nil {
+				isNumericID = true
+			}
+
 			// Очищаем doctorID (специальность) для надежного сравнения
 			// Убираем все не-буквенные и не-цифровые символы для нормализации
 			cleanDoctorID := strings.ToLower(strings.TrimSpace(doctorID))
@@ -1666,41 +1746,59 @@ func listVisitsHandler(w http.ResponseWriter, r *http.Request) {
 			cleanDoctorID = strings.ReplaceAll(cleanDoctorID, "врач", "")
 			cleanDoctorID = strings.TrimSpace(cleanDoctorID)
 
-			log.Printf("DEBUG listVisits: Checking visit %d for doctorID=%s (cleaned: %s), routeSheet has %d steps", id, doctorID, cleanDoctorID, len(rs))
+			log.Printf("DEBUG listVisits: Checking visit %d for doctorID=%s (isNumeric=%v, cleaned: %s), routeSheet has %d steps", id, doctorID, isNumericID, cleanDoctorID, len(rs))
 
 			for idx, step := range rs {
+				// Пропускаем шаги, которые не являются врачами
+				stepType, _ := step["type"].(string)
+				if stepType != "doctor" {
+					continue
+				}
+
 				stepSpec, ok := step["specialty"].(string)
 				if !ok || stepSpec == "" {
 					log.Printf("DEBUG listVisits: Step %d has no specialty (type=%v, value=%v)", idx, step["type"], stepSpec)
 					continue
 				}
 
-				// Нормализуем специальность из маршрутного листа
-				cleanStepSpec := strings.ToLower(strings.TrimSpace(stepSpec))
-				cleanStepSpec = strings.ReplaceAll(cleanStepSpec, "врач-", "")
-				cleanStepSpec = strings.ReplaceAll(cleanStepSpec, "врач", "")
-				cleanStepSpec = strings.TrimSpace(cleanStepSpec)
-
-				// Также получаем doctorId из step, если он есть (может быть числом или строкой)
-				var stepDoctorIDStr string
-				if stepDoctorID, hasDoctorID := step["doctorId"]; hasDoctorID && stepDoctorID != nil {
-					// Преобразуем doctorId в строку (может быть число или строка в JSON)
-					stepDoctorIDStr = fmt.Sprintf("%v", stepDoctorID)
+				// Проверяем по doctorId (если передан числовой ID)
+				if isNumericID {
+					if stepDoctorID, hasDoctorID := step["doctorId"]; hasDoctorID && stepDoctorID != nil {
+						// Преобразуем doctorId из step в число
+						var stepDoctorIDInt int64
+						stepDoctorIDStr := fmt.Sprintf("%v", stepDoctorID)
+						if _, err := fmt.Sscanf(stepDoctorIDStr, "%d", &stepDoctorIDInt); err == nil {
+							if stepDoctorIDInt == doctorIDInt {
+								found = true
+								log.Printf("DEBUG listVisits: ✓ MATCH FOUND by doctorId: visit %d, step doctorId=%d matches requested doctorId=%d", id, stepDoctorIDInt, doctorIDInt)
+								break
+							}
+						}
+					}
 				}
 
-				log.Printf("DEBUG listVisits: Step %d: specialty=%s (cleaned: %s), doctorId=%s, comparing specialty with %s", idx, stepSpec, cleanStepSpec, stepDoctorIDStr, cleanDoctorID)
+				// Если не нашли по ID, проверяем по специальности
+				if !found {
+					// Нормализуем специальность из маршрутного листа
+					cleanStepSpec := strings.ToLower(strings.TrimSpace(stepSpec))
+					cleanStepSpec = strings.ReplaceAll(cleanStepSpec, "врач-", "")
+					cleanStepSpec = strings.ReplaceAll(cleanStepSpec, "врач", "")
+					cleanStepSpec = strings.TrimSpace(cleanStepSpec)
 
-				// Сравниваем специальности (прямое совпадение или частичное)
-				specialtyMatch := cleanStepSpec == cleanDoctorID || strings.Contains(cleanStepSpec, cleanDoctorID) || strings.Contains(cleanDoctorID, cleanStepSpec)
+					log.Printf("DEBUG listVisits: Step %d: specialty=%s (cleaned: %s), comparing with %s", idx, stepSpec, cleanStepSpec, cleanDoctorID)
 
-				if specialtyMatch {
-					found = true
-					log.Printf("DEBUG listVisits: ✓ MATCH FOUND for visit %d: stepSpec=%s (cleaned: %s) matches doctorID=%s (cleaned: %s)", id, stepSpec, cleanStepSpec, doctorID, cleanDoctorID)
-					break
+					// Сравниваем специальности (прямое совпадение или частичное)
+					specialtyMatch := cleanStepSpec == cleanDoctorID || strings.Contains(cleanStepSpec, cleanDoctorID) || strings.Contains(cleanDoctorID, cleanStepSpec)
+
+					if specialtyMatch {
+						found = true
+						log.Printf("DEBUG listVisits: ✓ MATCH FOUND by specialty: visit %d, stepSpec=%s (cleaned: %s) matches doctorID=%s (cleaned: %s)", id, stepSpec, cleanStepSpec, doctorID, cleanDoctorID)
+						break
+					}
 				}
 			}
 			if !found {
-				log.Printf("DEBUG listVisits: ✗ No matching specialty found for visit %d, doctorID=%s (cleaned: %s) in routeSheet with %d steps", id, doctorID, cleanDoctorID, len(rs))
+				log.Printf("DEBUG listVisits: ✗ No matching doctor found for visit %d, doctorID=%s (isNumeric=%v, cleaned: %s) in routeSheet with %d steps", id, doctorID, isNumericID, cleanDoctorID, len(rs))
 				continue
 			}
 		}
@@ -1805,10 +1903,12 @@ func upsertAmbulatoryCardHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// АВТОМАТИЧЕСКАЯ ОТМЕТКА В МАРШРУТНОМ ЛИСТЕ
+	var clinicIDForNotification string
 	if in.Spec != nil {
 		var entries map[string]interface{}
 		if err := json.Unmarshal(in.Spec, &entries); err == nil {
-			for specialty := range entries {
+			for specialtyName := range entries {
+				specialty := specialtyName
 				log.Printf("Updating route sheet for employee %s, specialty: %s", in.PatientUID, specialty)
 
 				// Более надежный запрос обновления элемента в JSONB массиве
@@ -1836,32 +1936,44 @@ func upsertAmbulatoryCardHandler(w http.ResponseWriter, r *http.Request) {
 					rows := res.RowsAffected()
 					log.Printf("Route sheet updated, rows affected: %d", rows)
 				}
+
+				// Получаем clinicID для уведомлений (только один раз)
+				if clinicIDForNotification == "" {
+					_ = db.QueryRow(ctx, "SELECT clinic_id FROM employee_visits WHERE employee_id = $1 AND status IN ('registered', 'in_progress') LIMIT 1", in.PatientUID).Scan(&clinicIDForNotification)
+				}
 			}
 		}
+	}
 
-		// Оповещаем сотрудника (по ИИН и по UUID если возможно)
-		broadcastToUser(in.PatientUID, "visit_updated", map[string]interface{}{
+	// Оповещаем сотрудника (по ИИН и по UUID если возможно)
+	broadcastToUser(in.PatientUID, "visit_updated", map[string]interface{}{
+		"employeeId": in.PatientUID,
+		"status":     "updated",
+	})
+
+	// Находим UUID пользователя по ИИН для WebSocket
+	var realUserID string
+	_ = db.QueryRow(ctx, "SELECT id FROM users WHERE employee_id = $1 LIMIT 1", in.PatientUID).Scan(&realUserID)
+	if realUserID != "" && realUserID != in.PatientUID {
+		broadcastToUser(realUserID, "visit_updated", map[string]interface{}{
 			"employeeId": in.PatientUID,
-			"status":     "updated",
+		})
+	}
+
+	// Оповещаем клинику и всех врачей клиники
+	if clinicIDForNotification == "" {
+		_ = db.QueryRow(ctx, "SELECT clinic_id FROM employee_visits WHERE employee_id = $1 AND status IN ('registered', 'in_progress') LIMIT 1", in.PatientUID).Scan(&clinicIDForNotification)
+	}
+	if clinicIDForNotification != "" {
+		broadcastToUser(clinicIDForNotification, "visit_updated", map[string]interface{}{
+			"employeeId": in.PatientUID,
 		})
 
-		// Находим UUID пользователя по ИИН для WebSocket
-		var realUserID string
-		_ = db.QueryRow(ctx, "SELECT id FROM users WHERE employee_id = $1 LIMIT 1", in.PatientUID).Scan(&realUserID)
-		if realUserID != "" && realUserID != in.PatientUID {
-			broadcastToUser(realUserID, "visit_updated", map[string]interface{}{
-				"employeeId": in.PatientUID,
-			})
-		}
-
-		// Оповещаем клинику
-		var clinicID string
-		_ = db.QueryRow(ctx, "SELECT clinic_id FROM employee_visits WHERE employee_id = $1 AND status IN ('registered', 'in_progress') LIMIT 1", in.PatientUID).Scan(&clinicID)
-		if clinicID != "" {
-			broadcastToUser(clinicID, "visit_updated", map[string]interface{}{
-				"employeeId": in.PatientUID,
-			})
-		}
+		// Также уведомляем всех врачей клиники о обновлении визита
+		broadcastToRole(UserRoleDoctor, "visit_updated", map[string]interface{}{
+			"employeeId": in.PatientUID,
+			"clinicId":   clinicIDForNotification,
+		})
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})

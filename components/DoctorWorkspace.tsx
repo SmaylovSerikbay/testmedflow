@@ -55,14 +55,20 @@ const DoctorWorkspace: React.FC<DoctorWorkspaceProps> = ({ currentUser, showToas
     
     // Подписка на WebSocket для мгновенного обновления очереди
     if (currentUser?.clinicId) {
-      // Подписываемся на события клиники
-      const unsubscribeClinic = websocketService.on('visit_updated', (msg) => {
+      // Подписываемся на события создания и обновления визитов
+      const unsubscribeVisitStarted = websocketService.on('visit_started', (msg) => {
+        console.log('DoctorWorkspace: Visit started via WS', msg);
+        loadVisits();
+      });
+      
+      const unsubscribeVisitUpdated = websocketService.on('visit_updated', (msg) => {
         console.log('DoctorWorkspace: Visit updated via WS', msg);
         loadVisits();
       });
       
       return () => {
-        unsubscribeClinic();
+        unsubscribeVisitStarted();
+        unsubscribeVisitUpdated();
       };
     }
   }, [currentUser]);

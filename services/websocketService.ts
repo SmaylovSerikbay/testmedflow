@@ -5,6 +5,7 @@
 
 export type WebSocketEventType = 
   | 'visit_created'
+  | 'visit_started'
   | 'visit_updated'
   | 'examination_completed'
   | 'route_sheet_updated'
