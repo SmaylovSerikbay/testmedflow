@@ -312,69 +312,6 @@ export async function apiUpsertAmbulatoryCard(card: AmbulatoryCard): Promise<voi
   });
 }
 
-// --- РАСШИРЕННЫЙ ФУНКЦИОНАЛ (критические и важные доработки) ---
 
-import { NamedLists, EmergencyNotice, SummaryReport } from '../types';
 
-// Поименные списки (п.15 Приказа)
-export async function apiGetNamedLists(contractId: number): Promise<NamedLists> {
-  return request<NamedLists>(`/api/contracts/${contractId}/named-lists`);
-}
-
-export async function apiUpdateNamedLists(contractId: number, lists: NamedLists): Promise<void> {
-  await request(`/api/contracts/${contractId}/named-lists`, {
-    method: 'POST',
-    body: JSON.stringify(lists),
-  });
-}
-
-// Сводный отчет (п.17 Приказа)
-export async function apiGetSummaryReport(contractId: number): Promise<SummaryReport | null> {
-  return request<SummaryReport | null>(`/api/contracts/${contractId}/summary-report`);
-}
-
-export async function apiCreateSummaryReport(contractId: number, report: Omit<SummaryReport, 'contractId' | 'reportDate'>): Promise<SummaryReport> {
-  return request<SummaryReport>(`/api/contracts/${contractId}/summary-report`, {
-    method: 'POST',
-    body: JSON.stringify(report),
-  });
-}
-
-// Экстренные извещения (п.19 Приказа)
-export async function apiListEmergencyNotices(contractId: number): Promise<EmergencyNotice[]> {
-  return request<EmergencyNotice[]>(`/api/contracts/${contractId}/emergency-notices`);
-}
-
-export async function apiCreateEmergencyNotice(contractId: number, notice: Omit<EmergencyNotice, 'id' | 'contractId' | 'sentDate' | 'status'>): Promise<EmergencyNotice> {
-  return request<EmergencyNotice>(`/api/contracts/${contractId}/emergency-notices`, {
-    method: 'POST',
-    body: JSON.stringify(notice),
-  });
-}
-
-// План оздоровления (п.20 Приказа)
-export async function apiGetHealthPlan(contractId: number): Promise<{ content: string }> {
-  return request<{ content: string }>(`/api/contracts/${contractId}/health-plan`);
-}
-
-export async function apiUpdateHealthPlan(contractId: number, content: string): Promise<void> {
-  await request(`/api/contracts/${contractId}/health-plan`, {
-    method: 'POST',
-    body: JSON.stringify({ content }),
-  });
-}
-
-// Передача медицинских карт (п.18, п.123 Приказа)
-export async function apiTransferAmbulatoryCard(params: {
-  patientUid: string;
-  iin: string;
-  targetClinic: string;
-  reason: 'dismissal' | 'transfer';
-  newWorkplace?: string;
-}): Promise<{ status: string; transfer: any; card: AmbulatoryCard }> {
-  return request('/api/ambulatory-cards/transfer', {
-    method: 'POST',
-    body: JSON.stringify(params),
-  });
-}
 

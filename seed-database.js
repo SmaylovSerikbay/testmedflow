@@ -13,7 +13,7 @@
  * - Тестовый визит для одного сотрудника
  */
 
-const API_BASE = 'https://localhost:8080/api';
+const API_BASE = 'http://localhost:8080/api';
 
 // Тестовые данные пользователей
 const USERS = {

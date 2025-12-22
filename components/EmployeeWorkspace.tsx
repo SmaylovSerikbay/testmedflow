@@ -77,9 +77,9 @@ const EmployeeWorkspace: React.FC<EmployeeWorkspaceProps> = ({ currentUser, show
     );
   }
 
-  const completedCount = activeVisit.routeSheet.filter(s => s.status === 'completed').length;
-  const totalCount = activeVisit.routeSheet.length;
-  const progress = Math.round((completedCount / totalCount) * 100);
+  const completedCount = activeVisit.routeSheet?.filter(s => s.status === 'completed').length || 0;
+  const totalCount = activeVisit.routeSheet?.length || 0;
+  const progress = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
 
   return (
     <div className="h-full flex flex-col bg-slate-50 overflow-auto">
@@ -140,41 +140,48 @@ const EmployeeWorkspace: React.FC<EmployeeWorkspaceProps> = ({ currentUser, show
           </h2>
           
           <div className="grid gap-3">
-            {activeVisit.routeSheet.map((step, idx) => (
-              <div 
-                key={idx}
-                className={`p-5 rounded-2xl border transition-all flex items-center justify-between ${
-                  step.status === 'completed' 
-                    ? 'bg-emerald-50/50 border-emerald-100 opacity-75' 
-                    : 'bg-white border-slate-200 shadow-sm'
-                }`}
-              >
-                <div className="flex items-center gap-4">
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
-                    step.status === 'completed' ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-600'
-                  }`}>
-                    {step.status === 'completed' ? <CheckCircleIcon className="w-6 h-6" /> : <UserMdIcon className="w-6 h-6" />}
-                  </div>
-                  <div>
-                    <div className={`font-bold ${step.status === 'completed' ? 'text-emerald-900 line-through opacity-50' : 'text-slate-900'}`}>
-                        {step.specialty}
-                    </div>
-                    {step.roomNumber && (
-                        <div className="text-sm font-medium text-blue-600 flex items-center gap-1">
-                            <MapPinIcon className="w-3 h-3" />
-                            Кабинет {step.roomNumber}
-                        </div>
-                    )}
-                  </div>
-                </div>
-
-                {step.status === 'pending' && (
-                    <div className="px-3 py-1 bg-blue-50 text-blue-600 text-[10px] font-bold uppercase tracking-wider rounded-full">
-                        Ожидает
-                    </div>
-                )}
+            {(activeVisit.routeSheet || []).length === 0 ? (
+              <div className="p-8 text-center bg-white rounded-2xl border border-dashed border-slate-300">
+                <UserMdIcon className="w-12 h-12 text-slate-200 mx-auto mb-3" />
+                <p className="text-slate-400">Маршрутный лист пуст</p>
               </div>
-            ))}
+            ) : (
+              (activeVisit.routeSheet || []).map((step, idx) => (
+                <div 
+                  key={idx}
+                  className={`p-5 rounded-2xl border transition-all flex items-center justify-between ${
+                    step.status === 'completed' 
+                      ? 'bg-emerald-50/50 border-emerald-100 opacity-75' 
+                      : 'bg-white border-slate-200 shadow-sm'
+                  }`}
+                >
+                  <div className="flex items-center gap-4">
+                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
+                      step.status === 'completed' ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-600'
+                    }`}>
+                      {step.status === 'completed' ? <CheckCircleIcon className="w-6 h-6" /> : <UserMdIcon className="w-6 h-6" />}
+                    </div>
+                    <div>
+                      <div className={`font-bold ${step.status === 'completed' ? 'text-emerald-900 line-through opacity-50' : 'text-slate-900'}`}>
+                          {step.specialty}
+                      </div>
+                      {step.roomNumber && (
+                          <div className="text-sm font-medium text-blue-600 flex items-center gap-1">
+                              <MapPinIcon className="w-3 h-3" />
+                              Кабинет {step.roomNumber}
+                          </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {step.status === 'pending' && (
+                      <div className="px-3 py-1 bg-blue-50 text-blue-600 text-[10px] font-bold uppercase tracking-wider rounded-full">
+                          Ожидает
+                      </div>
+                  )}
+                </div>
+              ))
+            )}
           </div>
         </div>
 
