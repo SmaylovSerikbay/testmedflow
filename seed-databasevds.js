@@ -13,7 +13,7 @@
  * - Тестовый визит для одного сотрудника
  */
 
-const API_BASE = 'http://medwork.digital/api';
+const API_BASE = 'https://medwork.digital/api';
 
 // Тестовые данные пользователей
 const USERS = {
