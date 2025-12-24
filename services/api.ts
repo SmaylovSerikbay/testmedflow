@@ -302,14 +302,90 @@ export async function apiGetAmbulatoryCard(params: { patientUid?: string; iin?: 
   if (params.patientUid) query.append('patientUid', params.patientUid);
   if (params.iin) query.append('iin', params.iin);
   
-  return request<AmbulatoryCard | null>(`/api/ambulatory-cards?${query.toString()}`);
+  console.log('apiGetAmbulatoryCard: Requesting card', { patientUid: params.patientUid, iin: params.iin });
+  
+  const data = await request<any>(`/api/ambulatory-cards?${query.toString()}`);
+  
+  if (!data) {
+    console.log('apiGetAmbulatoryCard: No card found');
+    return null;
+  }
+  
+  console.log('apiGetAmbulatoryCard: Received data', {
+    patientUid: data.patientUid,
+    iin: data.iin,
+    hasSpecialistEntries: !!data.specialistEntries,
+    specialistEntriesType: typeof data.specialistEntries
+  });
+  
+  // Парсим JSON поля если они пришли как строки или json.RawMessage
+  let specialistEntries = data.specialistEntries;
+  if (typeof specialistEntries === 'string') {
+    try {
+      specialistEntries = JSON.parse(specialistEntries);
+    } catch (e) {
+      console.error('apiGetAmbulatoryCard: Error parsing specialistEntries string', e);
+      specialistEntries = {};
+    }
+  }
+  
+  let labResults = data.labResults;
+  if (typeof labResults === 'string') {
+    try {
+      labResults = JSON.parse(labResults);
+    } catch (e) {
+      console.error('apiGetAmbulatoryCard: Error parsing labResults string', e);
+      labResults = {};
+    }
+  }
+  
+  // Парсим general и medical если они строки
+  let general = data.general;
+  if (typeof general === 'string') {
+    try {
+      general = JSON.parse(general);
+    } catch (e) {
+      console.error('apiGetAmbulatoryCard: Error parsing general string', e);
+    }
+  }
+  
+  let medical = data.medical;
+  if (typeof medical === 'string') {
+    try {
+      medical = JSON.parse(medical);
+    } catch (e) {
+      console.error('apiGetAmbulatoryCard: Error parsing medical string', e);
+    }
+  }
+  
+  return {
+    ...data,
+    general: general || data.general,
+    medical: medical || data.medical,
+    specialistEntries: specialistEntries || {},
+    labResults: labResults || {}
+  } as AmbulatoryCard;
 }
 
 export async function apiUpsertAmbulatoryCard(card: AmbulatoryCard): Promise<void> {
-  await request('/api/ambulatory-cards', {
-    method: 'POST',
-    body: JSON.stringify(card),
+  console.log('apiUpsertAmbulatoryCard: Sending card', {
+    patientUid: card.patientUid,
+    iin: card.iin,
+    specialistEntries: card.specialistEntries,
+    hasSpecialistEntries: !!card.specialistEntries,
+    specialistEntriesKeys: card.specialistEntries ? Object.keys(card.specialistEntries) : []
   });
+  
+  try {
+    await request('/api/ambulatory-cards', {
+      method: 'POST',
+      body: JSON.stringify(card),
+    });
+    console.log('apiUpsertAmbulatoryCard: Card saved successfully');
+  } catch (error) {
+    console.error('apiUpsertAmbulatoryCard: Error saving card', error);
+    throw error;
+  }
 }
 
 

@@ -1,12 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { UserProfile } from '../types';
 import { ApiVisit, apiListVisits } from '../services/api';
-import AmbulatoryCard from './AmbulatoryCard';
+import VisitForm052 from '../src/components/doctor-workspace/VisitForm052';
+import { DoctorVisit } from '../src/types/medical-forms';
+import { mapSpecialtyToEnum } from '../src/utils/specialtyMapper';
 import { websocketService } from '../services/websocketService';
 import { 
   UserIcon, ClockIcon, CheckCircleIcon, 
-  LoaderIcon, FileTextIcon, SearchIcon, XIcon 
+  LoaderIcon, FileTextIcon, XIcon 
 } from './Icons';
+import { apiUpsertAmbulatoryCard, apiGetAmbulatoryCard } from '../services/api';
+import { AmbulatoryCard } from '../types';
 
 interface DoctorWorkspaceProps {
   currentUser: UserProfile | null;
@@ -18,31 +22,23 @@ const DoctorWorkspace: React.FC<DoctorWorkspaceProps> = ({ currentUser, showToas
   const [isLoading, setIsLoading] = useState(true);
   const [filter, setFilter] = useState<'pending' | 'completed'>('pending');
   const [selectedVisit, setSelectedVisit] = useState<ApiVisit | null>(null);
+  const [ambulatoryCard, setAmbulatoryCard] = useState<AmbulatoryCard | null>(null);
 
   const loadVisits = async () => {
     if (!currentUser?.specialty || !currentUser?.clinicId) {
-      console.log('DoctorWorkspace: Missing specialty or clinicId', { specialty: currentUser?.specialty, clinicId: currentUser?.clinicId });
       setVisits([]);
       setIsLoading(false);
       return;
     }
     setIsLoading(true);
     try {
-      // Ищем визиты, где в маршрутном листе есть специальность этого врача
-      console.log('DoctorWorkspace: Loading visits for', { 
-        clinicId: currentUser.clinicId, 
-        specialty: currentUser.specialty,
-        doctorId: currentUser.doctorId 
-      });
       const data = await apiListVisits({ 
         clinicId: currentUser.clinicId, 
         doctorId: currentUser.doctorId || currentUser.specialty 
       });
-      console.log('DoctorWorkspace: Received visits', data);
-      // Обрабатываем null или undefined как пустой массив
-      setVisits(Array.isArray(data) ? data : (data === null || data === undefined ? [] : []));
+      setVisits(Array.isArray(data) ? data : []);
     } catch (error) {
-      console.error('DoctorWorkspace: Error loading visits:', error);
+      console.error('Error loading visits:', error);
       showToast('error', 'Ошибка загрузки очереди');
       setVisits([]);
     } finally {
@@ -50,19 +46,75 @@ const DoctorWorkspace: React.FC<DoctorWorkspaceProps> = ({ currentUser, showToas
     }
   };
 
+  // Загрузка амбулаторной карты при выборе визита
+  useEffect(() => {
+    const loadCard = async () => {
+      if (!selectedVisit) {
+        setAmbulatoryCard(null);
+        return;
+      }
+
+      try {
+        console.log('DoctorWorkspace: Loading card for visit', { employeeId: selectedVisit.employeeId });
+        const card = await apiGetAmbulatoryCard({ 
+          patientUid: selectedVisit.employeeId, 
+          iin: selectedVisit.employeeId 
+        });
+        console.log('DoctorWorkspace: Loaded card', card);
+        console.log('DoctorWorkspace: Card specialistEntries', card?.specialistEntries);
+        
+        // Парсим JSON поля если они пришли как строки
+        if (card) {
+          let specialistEntries = card.specialistEntries || {};
+          if (typeof specialistEntries === 'string') {
+            try {
+              specialistEntries = JSON.parse(specialistEntries);
+            } catch (e) {
+              console.error('Error parsing specialistEntries:', e);
+              specialistEntries = {};
+            }
+          }
+          
+          let labResults = card.labResults || {};
+          if (typeof labResults === 'string') {
+            try {
+              labResults = JSON.parse(labResults);
+            } catch (e) {
+              console.error('Error parsing labResults:', e);
+              labResults = {};
+            }
+          }
+          
+          const parsedCard = {
+            ...card,
+            specialistEntries,
+            labResults
+          };
+          
+          console.log('DoctorWorkspace: Parsed card specialistEntries', parsedCard.specialistEntries);
+          setAmbulatoryCard(parsedCard);
+        } else {
+          console.log('DoctorWorkspace: No card found, setting to null');
+          setAmbulatoryCard(null);
+        }
+      } catch (error) {
+        console.error('Error loading ambulatory card:', error);
+        setAmbulatoryCard(null);
+      }
+    };
+
+    loadCard();
+  }, [selectedVisit]);
+
   useEffect(() => {
     loadVisits();
     
-    // Подписка на WebSocket для мгновенного обновления очереди
     if (currentUser?.clinicId) {
-      // Подписываемся на события создания и обновления визитов
-      const unsubscribeVisitStarted = websocketService.on('visit_started', (msg) => {
-        console.log('DoctorWorkspace: Visit started via WS', msg);
+      const unsubscribeVisitStarted = websocketService.on('visit_started', () => {
         loadVisits();
       });
       
-      const unsubscribeVisitUpdated = websocketService.on('visit_updated', (msg) => {
-        console.log('DoctorWorkspace: Visit updated via WS', msg);
+      const unsubscribeVisitUpdated = websocketService.on('visit_updated', () => {
         loadVisits();
       });
       
@@ -78,7 +130,6 @@ const DoctorWorkspace: React.FC<DoctorWorkspaceProps> = ({ currentUser, showToas
     return () => clearInterval(interval);
   }, [currentUser]);
 
-  // Вспомогательная функция для получения шага маршрутного листа текущего врача
   const getMyStep = (visit: ApiVisit) => {
     if (!visit.routeSheet || !currentUser?.specialty) return null;
     const mySpec = currentUser.specialty.toLowerCase().replace(/[^а-яёa-z0-9]/g, '').trim();
@@ -95,6 +146,227 @@ const DoctorWorkspace: React.FC<DoctorWorkspaceProps> = ({ currentUser, showToas
     return myStep.status === 'completed';
   });
 
+  // Сохранение визита врача в амбулаторную карту
+  const handleSaveVisit = async (visit: DoctorVisit) => {
+    if (!selectedVisit || !currentUser?.specialty) {
+      console.error('handleSaveVisit: Missing selectedVisit or specialty', { selectedVisit, specialty: currentUser?.specialty });
+      return;
+    }
+
+    try {
+      console.log('handleSaveVisit: Starting save for visit', { visit, employeeId: selectedVisit.employeeId });
+      
+      // Загружаем или создаем карту
+      let card = ambulatoryCard;
+      if (!card) {
+        console.log('handleSaveVisit: Loading card from API');
+        card = await apiGetAmbulatoryCard({ 
+          patientUid: selectedVisit.employeeId, 
+          iin: selectedVisit.employeeId 
+        });
+        console.log('handleSaveVisit: Loaded card', card);
+      }
+
+      // Если карты нет, создаем базовую структуру
+      if (!card) {
+        console.log('handleSaveVisit: Creating new card');
+        card = {
+          patientUid: selectedVisit.employeeId,
+          iin: selectedVisit.employeeId,
+          general: {
+            fullName: selectedVisit.employeeName || '',
+            dob: '',
+            gender: 'male',
+            age: 0,
+            residentType: 'city',
+            address: '',
+            workPlace: selectedVisit.clientName || '',
+            position: '',
+            citizenship: 'РК',
+            visitReason: 'Периодический медосмотр'
+          },
+          medical: {
+            anthropometry: {
+              height: '',
+              weight: '',
+              bmi: '',
+              pressure: '',
+              pulse: ''
+            }
+          },
+          specialistEntries: {},
+          labResults: {}
+        };
+      }
+
+      // Преобразуем визит в формат амбулаторной карты
+      const specialtyKey = currentUser.specialty;
+      const specialistEntry = {
+        doctorName: visit.doctorName || currentUser.specialty,
+        date: visit.visitDate,
+        complaints: visit.complaints,
+        anamnesis: visit.anamnesis,
+        objective: JSON.stringify(visit.objectiveData),
+        diagnosis: visit.icd10Code,
+        recommendations: visit.recommendations,
+        fitnessStatus: visit.conclusion === 'FIT' ? 'fit' : 
+                      visit.conclusion === 'UNFIT' ? 'unfit' : 'needs_observation'
+      };
+
+      const updatedCard: AmbulatoryCard = {
+        ...card,
+        specialistEntries: {
+          ...(card.specialistEntries || {}),
+          [specialtyKey]: specialistEntry
+        }
+      };
+
+      console.log('handleSaveVisit: Saving card', { 
+        patientUid: updatedCard.patientUid, 
+        iin: updatedCard.iin,
+        specialtyKey,
+        specialistEntry 
+      });
+
+      await apiUpsertAmbulatoryCard(updatedCard);
+      console.log('handleSaveVisit: Card saved successfully');
+      
+      // Перезагружаем карту из API чтобы получить актуальные данные
+      try {
+        const reloadedCard = await apiGetAmbulatoryCard({ 
+          patientUid: selectedVisit.employeeId, 
+          iin: selectedVisit.employeeId 
+        });
+        console.log('handleSaveVisit: Reloaded card after save', reloadedCard);
+        
+        if (reloadedCard) {
+          // Парсим JSON поля
+          let specialistEntries = reloadedCard.specialistEntries || {};
+          if (typeof specialistEntries === 'string') {
+            try {
+              specialistEntries = JSON.parse(specialistEntries);
+            } catch (e) {
+              console.error('Error parsing specialistEntries after reload:', e);
+              specialistEntries = {};
+            }
+          }
+          
+          let labResults = reloadedCard.labResults || {};
+          if (typeof labResults === 'string') {
+            try {
+              labResults = JSON.parse(labResults);
+            } catch (e) {
+              console.error('Error parsing labResults after reload:', e);
+              labResults = {};
+            }
+          }
+          
+          setAmbulatoryCard({
+            ...reloadedCard,
+            specialistEntries,
+            labResults
+          });
+        }
+      } catch (reloadError) {
+        console.error('Error reloading card after save:', reloadError);
+        // Используем обновленную карту из памяти
+        setAmbulatoryCard(updatedCard);
+      }
+      
+      showToast('success', 'Данные визита сохранены');
+      loadVisits();
+      
+      // Закрываем форму через секунду
+      setTimeout(() => setSelectedVisit(null), 1000);
+    } catch (error) {
+      console.error('Error saving visit:', error);
+      showToast('error', `Ошибка при сохранении данных визита: ${error instanceof Error ? error.message : 'Неизвестная ошибка'}`);
+      throw error;
+    }
+  };
+
+  // Получаем начальные данные визита из амбулаторной карты
+  const getInitialVisitData = (): Partial<DoctorVisit> | undefined => {
+    if (!ambulatoryCard || !currentUser?.specialty) {
+      console.log('getInitialVisitData: No card or specialty', { 
+        hasCard: !!ambulatoryCard, 
+        specialty: currentUser?.specialty 
+      });
+      return undefined;
+    }
+
+    const specialtyKey = currentUser.specialty;
+    console.log('getInitialVisitData: Looking for entry', { 
+      specialtyKey, 
+      specialistEntriesKeys: Object.keys(ambulatoryCard.specialistEntries || {}) 
+    });
+    
+    const entry = ambulatoryCard.specialistEntries?.[specialtyKey];
+    
+    if (!entry) {
+      console.log('getInitialVisitData: No entry found for specialty', specialtyKey);
+      return undefined;
+    }
+
+    console.log('getInitialVisitData: Found entry', entry);
+
+    try {
+      // Парсим objective если это JSON строка
+      let objectiveData = {};
+      if (entry.objective) {
+        if (typeof entry.objective === 'string') {
+          try {
+            objectiveData = JSON.parse(entry.objective);
+          } catch (e) {
+            console.error('getInitialVisitData: Error parsing objective JSON', e, entry.objective);
+            // Если не JSON, возможно это уже объект или просто текст
+            objectiveData = {};
+          }
+        } else if (typeof entry.objective === 'object') {
+          objectiveData = entry.objective;
+        }
+      }
+
+      const result = {
+        complaints: entry.complaints || '',
+        anamnesis: entry.anamnesis || '',
+        objectiveData,
+        icd10Code: entry.diagnosis || '',
+        conclusion: entry.fitnessStatus === 'fit' ? 'FIT' :
+                    entry.fitnessStatus === 'unfit' ? 'UNFIT' : 'REQUIRES_EXAM',
+        recommendations: entry.recommendations || '',
+        doctorName: entry.doctorName || '',
+        visitDate: entry.date || new Date().toISOString()
+      };
+
+      console.log('getInitialVisitData: Returning data', result);
+      return result;
+    } catch (e) {
+      console.error('getInitialVisitData: Error processing entry', e);
+      return {
+        complaints: entry.complaints || '',
+        anamnesis: entry.anamnesis || '',
+        objectiveData: {},
+        icd10Code: entry.diagnosis || '',
+        conclusion: entry.fitnessStatus === 'fit' ? 'FIT' :
+                    entry.fitnessStatus === 'unfit' ? 'UNFIT' : 'REQUIRES_EXAM',
+        recommendations: entry.recommendations || '',
+        doctorName: entry.doctorName || '',
+        visitDate: entry.date || new Date().toISOString()
+      };
+    }
+  };
+
+  if (!currentUser?.specialty) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <p className="text-slate-400">Специальность не указана</p>
+      </div>
+    );
+  }
+
+  const specialtyEnum = mapSpecialtyToEnum(currentUser.specialty);
+
   return (
     <div className="h-full flex flex-col bg-slate-50">
       <div className="p-6 space-y-6 max-w-5xl mx-auto w-full">
@@ -102,7 +374,7 @@ const DoctorWorkspace: React.FC<DoctorWorkspaceProps> = ({ currentUser, showToas
         {/* Header Section */}
         <div className="flex items-center justify-between">
           <div className="flex flex-col gap-1">
-            <h1 className="text-2xl font-bold text-slate-900">{currentUser?.specialty}</h1>
+            <h1 className="text-2xl font-bold text-slate-900">{currentUser.specialty}</h1>
             <p className="text-slate-500 text-sm">Очередь пациентов на сегодня</p>
           </div>
           <button 
@@ -174,7 +446,7 @@ const DoctorWorkspace: React.FC<DoctorWorkspaceProps> = ({ currentUser, showToas
                 <div className="flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-all">
                     <button className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 flex items-center gap-2">
                         <FileTextIcon className="w-4 h-4" />
-                        Открыть 052/у
+                        Открыть форму 052/у
                     </button>
                 </div>
               </div>
@@ -189,27 +461,22 @@ const DoctorWorkspace: React.FC<DoctorWorkspaceProps> = ({ currentUser, showToas
         </div>
       </div>
 
-      {/* Ambulatory Card Modal */}
+      {/* Visit Form Modal */}
       {selectedVisit && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="w-full max-w-6xl h-full flex flex-col">
-            <AmbulatoryCard 
-              patientUid={selectedVisit.employeeId}
-              iin={selectedVisit.employeeId}
-              initialData={{
-                name: selectedVisit.employeeName,
-                clientName: selectedVisit.clientName,
-                userSpecialty: currentUser?.specialty, // Pass specialty to auto-focus
+            <VisitForm052
+              patient={{
+                id: selectedVisit.employeeId,
+                name: selectedVisit.employeeName || `ID: ${selectedVisit.employeeId}`,
+                iin: selectedVisit.employeeId
               }}
-              mode="edit"
-              userRole={currentUser?.role}
+              specialty={specialtyEnum}
+              doctorId={currentUser.doctorId || currentUser.uid}
+              doctorName={currentUser.specialty}
+              initialData={getInitialVisitData()}
+              onSave={handleSaveVisit}
               onClose={() => setSelectedVisit(null)}
-              onSaveSuccess={() => {
-                // После успешного сохранения можно либо закрыть карту, либо обновить очередь
-                loadVisits();
-                // Для удобства врачей можно закрыть окно, чтобы они видели обновленный список
-                setTimeout(() => setSelectedVisit(null), 1000);
-              }}
               showToast={showToast}
             />
           </div>
@@ -220,4 +487,3 @@ const DoctorWorkspace: React.FC<DoctorWorkspaceProps> = ({ currentUser, showToas
 };
 
 export default DoctorWorkspace;
-

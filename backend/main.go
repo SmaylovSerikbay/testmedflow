@@ -1820,6 +1820,8 @@ func getAmbulatoryCardHandler(w http.ResponseWriter, r *http.Request) {
 	patientUID := r.URL.Query().Get("patientUid")
 	iin := r.URL.Query().Get("iin")
 
+	log.Printf("getAmbulatoryCard: Request received - patientUid=%s, iin=%s", patientUID, iin)
+
 	if patientUID == "" && iin == "" {
 		errorResponse(w, http.StatusBadRequest, "patientUid or iin is required")
 		return
@@ -1843,15 +1845,20 @@ func getAmbulatoryCardHandler(w http.ResponseWriter, r *http.Request) {
 		arg = iin
 	}
 
+	log.Printf("getAmbulatoryCard: Executing query with arg=%s", arg)
+
 	err := db.QueryRow(ctx, query, arg).Scan(
 		&card.ID, &card.PatientUID, &card.IIN, &general, &medical, &spec, &labs, &final, &comm, &card.Instr, &createdAt, &updatedAt,
 	)
 
 	if err != nil {
 		// Если не найдено, это не ошибка, просто возвращаем null
+		log.Printf("getAmbulatoryCard: Card not found for patientUid=%s, iin=%s, error=%v", patientUID, iin, err)
 		jsonResponse(w, http.StatusOK, nil)
 		return
 	}
+
+	log.Printf("getAmbulatoryCard: Card found - id=%d, patientUid=%s, iin=%s, spec length=%d", card.ID, card.PatientUID, card.IIN, len(spec))
 
 	card.General = json.RawMessage(general)
 	card.Medical = json.RawMessage(medical)
@@ -1868,9 +1875,17 @@ func getAmbulatoryCardHandler(w http.ResponseWriter, r *http.Request) {
 func upsertAmbulatoryCardHandler(w http.ResponseWriter, r *http.Request) {
 	var in AmbulatoryCard
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		log.Printf("upsertAmbulatoryCard: JSON decode error: %v", err)
 		errorResponse(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+
+	log.Printf("upsertAmbulatoryCard: Received card for patientUid=%s, iin=%s", in.PatientUID, in.IIN)
+	specPreview := string(in.Spec)
+	if len(specPreview) > 200 {
+		specPreview = specPreview[:200] + "..."
+	}
+	log.Printf("upsertAmbulatoryCard: Spec field length=%d, content preview: %s", len(in.Spec), specPreview)
 
 	if in.PatientUID == "" && in.IIN == "" {
 		errorResponse(w, http.StatusBadRequest, "iin or patientUid are required")

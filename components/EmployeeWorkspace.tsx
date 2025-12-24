@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { UserProfile } from '../types';
-import { ApiVisit, apiListVisits } from '../services/api';
-import AmbulatoryCard from './AmbulatoryCard';
+import { UserProfile, AmbulatoryCard } from '../types';
+import { ApiVisit, apiListVisits, apiGetAmbulatoryCard } from '../services/api';
+import Form075 from '../src/components/documents/Form075';
+import HealthPassport from '../src/components/documents/HealthPassport';
+import { generateForm075, generateHealthPassport } from '../src/utils/documentGenerator';
 import { websocketService } from '../services/websocketService';
 import { 
   CheckCircleIcon, ClockIcon, MapPinIcon, 
-  UserMdIcon, LoaderIcon, FileTextIcon, XIcon 
+  UserMdIcon, LoaderIcon, FileTextIcon, XIcon, PrinterIcon
 } from './Icons';
 
 interface EmployeeWorkspaceProps {
@@ -16,7 +18,8 @@ interface EmployeeWorkspaceProps {
 const EmployeeWorkspace: React.FC<EmployeeWorkspaceProps> = ({ currentUser, showToast }) => {
   const [activeVisit, setActiveVisit] = useState<ApiVisit | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [showMedicalCard, setShowMedicalCard] = useState(false);
+  const [ambulatoryCard, setAmbulatoryCard] = useState<AmbulatoryCard | null>(null);
+  const [activeDocument, setActiveDocument] = useState<'form075' | 'healthPassport' | null>(null);
 
   const loadVisit = async () => {
     // Используем либо employeeId (ИИН), либо uid (ID пользователя)
@@ -55,6 +58,31 @@ const EmployeeWorkspace: React.FC<EmployeeWorkspaceProps> = ({ currentUser, show
     const interval = setInterval(loadVisit, 30000);
     return () => clearInterval(interval);
   }, [currentUser]);
+
+  // Загрузка амбулаторной карты при наличии визита
+  useEffect(() => {
+    const loadCard = async () => {
+      if (!activeVisit) {
+        setAmbulatoryCard(null);
+        return;
+      }
+
+      try {
+        console.log('EmployeeWorkspace: Loading card', { employeeId: activeVisit.employeeId });
+        const card = await apiGetAmbulatoryCard({ 
+          patientUid: activeVisit.employeeId, 
+          iin: activeVisit.employeeId 
+        });
+        console.log('EmployeeWorkspace: Loaded card', card);
+        setAmbulatoryCard(card);
+      } catch (error) {
+        console.error('Error loading ambulatory card:', error);
+        setAmbulatoryCard(null);
+      }
+    };
+
+    loadCard();
+  }, [activeVisit]);
 
   if (isLoading && !activeVisit) {
     return (
@@ -185,30 +213,113 @@ const EmployeeWorkspace: React.FC<EmployeeWorkspaceProps> = ({ currentUser, show
           </div>
         </div>
 
-        {/* Footer info */}
-        <div 
-          onClick={() => setShowMedicalCard(true)}
-          className="bg-blue-50 border border-blue-100 rounded-2xl p-6 text-center cursor-pointer hover:bg-blue-100 transition-all group"
-        >
-            <p className="text-blue-800 text-sm font-medium flex items-center justify-center gap-2">
-                <FileTextIcon className="w-5 h-5 text-blue-600 group-hover:scale-110 transition-transform" />
-                Посмотреть мою амбулаторную карту (052/у)
+        {/* Documents Section */}
+        {activeVisit && progress === 100 && ambulatoryCard && (
+          <div className="space-y-4">
+            <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2 px-2">
+              <FileTextIcon className="w-5 h-5 text-blue-600" />
+              Документы результатов
+            </h2>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <button
+                onClick={() => setActiveDocument('form075')}
+                className="bg-white border-2 border-blue-200 rounded-2xl p-6 hover:border-blue-400 hover:shadow-lg transition-all text-left group"
+              >
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center group-hover:bg-blue-200 transition-colors">
+                    <FileTextIcon className="w-6 h-6 text-blue-600" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900">Форма 075/у</h3>
+                    <p className="text-xs text-slate-500">Общее заключение</p>
+                  </div>
+                </div>
+                <p className="text-sm text-slate-600">
+                  Заключение о результатах медицинского осмотра
+                </p>
+              </button>
+
+              <button
+                onClick={() => setActiveDocument('healthPassport')}
+                className="bg-white border-2 border-emerald-200 rounded-2xl p-6 hover:border-emerald-400 hover:shadow-lg transition-all text-left group"
+              >
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-12 h-12 bg-emerald-100 rounded-xl flex items-center justify-center group-hover:bg-emerald-200 transition-colors">
+                    <FileTextIcon className="w-6 h-6 text-emerald-600" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900">Паспорт здоровья</h3>
+                    <p className="text-xs text-slate-500">Для вредных условий</p>
+                  </div>
+                </div>
+                <p className="text-sm text-slate-600">
+                  Паспорт здоровья работника с вредными факторами
+                </p>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {activeVisit && progress < 100 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 text-center">
+            <p className="text-amber-800 text-sm font-medium">
+              Медосмотр еще не завершен. Документы будут доступны после прохождения всех врачей.
             </p>
-        </div>
+          </div>
+        )}
       </div>
 
-      {/* Ambulatory Card Modal */}
-      {showMedicalCard && currentUser && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-6xl h-full flex flex-col">
-            <AmbulatoryCard 
-              patientUid={currentUser.employeeId || currentUser.uid} // Use employeeId (IIN) as primary key
-              iin={currentUser.employeeId || ''}
-              mode="view"
-              userRole={currentUser.role}
-              onClose={() => setShowMedicalCard(false)}
-              showToast={showToast}
-            />
+      {/* Document Modal */}
+      {activeDocument && activeVisit && ambulatoryCard && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex flex-col p-4 overflow-hidden">
+          {/* Header with print button - фиксированный */}
+          <div className="bg-white border-b border-slate-200 p-4 flex items-center justify-between z-10 flex-shrink-0">
+            <h2 className="text-xl font-bold text-slate-900">
+              {activeDocument === 'form075' ? 'Форма 075/у' : 'Паспорт здоровья'}
+            </h2>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => window.print()}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-bold text-sm transition-all"
+              >
+                <PrinterIcon className="w-4 h-4" />
+                Печать
+              </button>
+              <button
+                onClick={() => setActiveDocument(null)}
+                className="p-2 text-slate-400 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-all"
+              >
+                <XIcon className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Document Content - scrollable */}
+          <div className="flex-1 overflow-y-auto bg-white">
+            <div className="max-w-5xl mx-auto">
+              {activeDocument === 'form075' && (
+                <Form075 
+                  data={generateForm075(ambulatoryCard, {
+                    name: activeVisit.clientName || 'Медицинская организация',
+                    address: 'Адрес не указан',
+                    bin: 'БИН не указан'
+                  })}
+                />
+              )}
+              
+              {activeDocument === 'healthPassport' && (
+                <HealthPassport 
+                  data={generateHealthPassport(ambulatoryCard, {
+                    companyName: activeVisit.clientName || 'Организация не указана',
+                    department: 'Отдел не указан',
+                    profession: ambulatoryCard.general.position || 'Должность не указана',
+                    harmfulFactors: '', // TODO: Получить из контракта или данных сотрудника (employee.harmfulFactor)
+                    hazardExperienceYears: 0 // TODO: Получить из данных сотрудника (positionExperience)
+                  })}
+                />
+              )}
+            </div>
           </div>
         </div>
       )}
